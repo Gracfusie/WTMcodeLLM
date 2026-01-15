@@ -111,7 +111,14 @@ class WatermarkVLLMAdapter(LogitsProcessor):
                 last_token_id=last_token_id,
                 main_logits=main_logits_unsqueezed,
                 proxy_logits=proxy_logits_unsqueezed,
+                entropy_threshold=req_state.entropy_threshold,
+                delta=req_state.delta,
             )
+            
+            if applied:
+                req_state.watermarked_count += 1
+            else:
+                req_state.non_watermarked_count += 1
             
             if self.debug_enabled:
                 input_ids = torch.tensor(req_state.prompt_tok_ids + req_state.output_tok_ids, device=logits.device, dtype=torch.long).unsqueeze(0)

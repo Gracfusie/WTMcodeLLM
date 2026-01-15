@@ -1,5 +1,5 @@
 source /etc/network_turbo
-source /root/autodl-tmp/WTMcodeLLM/.venv/bin/activate
+source .venv/bin/activate
 
 # 确保权重和缓存都落在大盘
 export HF_HOME=/root/autodl-tmp/hf
@@ -9,25 +9,19 @@ export MODELSCOPE_CACHE=/root/autodl-tmp/modelscope_cache
 export VLLM_WORKDIR=/root/autodl-tmp/vllm_workdir   # 可选，编译/缓存目录
 export HF_HUB_DISABLE_XET=1  # 临时解决 bug
 export TIKTOKEN_ENCODINGS_BASE=/root/autodl-tmp/tiktoken_rs_cache
-export PYTHONPATH=/root/autodl-tmp/WTMcodeLLM:${PYTHONPATH}
-
-# 确保 Redis 服务正在运行
-# if ! pgrep -x "redis-server" > /dev/null; then
-#     echo "Redis 服务未运行,正在启动..."
-#     redis-server --daemonize yes
-#     if [ $? -eq 0 ]; then
-#         echo "Redis 服务已成功启动"
-#     else
-#         echo "警告: Redis 服务启动失败"
-#     fi
-# else
-#     echo "Redis 服务已在运行中"
-# fi
-
-
-export MAIN_MODEL="Qwen/Qwen2.5-Coder-1.5B-Instruct"
-echo 现在 main model 是小的。之后 Qwen/Qwen3-Coder-30B-A3B-Instruct 之后记得改！
+export PYTHONPATH=$(pwd):${PYTHONPATH}
 
 export WATERMARK_PROXY_MODEL="Qwen/Qwen2.5-Coder-1.5B-Instruct"
 export WATERMARK_PROXY_TEMPLATE_PREFIX="<|fim_prefix|>"
 export WATERMARK_PROXY_TEMPLATE_SUFFIX="<|fim_suffix|>\n<|fim_middle|>"
+
+# 可能要调的参数
+
+# ACW 水印参数
+export WATERMARK_ENTROPY_THRESHOLD="0.5"
+export WATERMARK_DELTA="2.0"
+export WATERMARK_SECRET_KEY="42"
+
+# Proxy 模型的 Window Size. -1 表示不使用 Window
+# 启动的话可能会让水印更 robust, i.e. 不容易靠截断/移动代码片段攻击
+export WATERMARK_PROXY_WINDOW_SIZE="-1"

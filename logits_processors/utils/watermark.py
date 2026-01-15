@@ -75,10 +75,13 @@ class ProxyLogitsGuidedWatermarker:
 
         return green_mask
 
-    def process_logits(self, last_token_id: int, main_logits: torch.Tensor, proxy_logits: torch.Tensor):
+    def process_logits(self, last_token_id: int, main_logits: torch.Tensor, proxy_logits: torch.Tensor, entropy_threshold=None, delta=None):
+        _entropy_threshold = entropy_threshold if entropy_threshold is not None else self.entropy_threshold
+        _delta = delta if delta is not None else self.delta
+        
         entropy = self._compute_entropy(proxy_logits)
     
-        if entropy < self.entropy_threshold:
+        if entropy < _entropy_threshold:
             return main_logits, False #跳过水印when entropy is low
         #Split
         green_mask = self._get_green_list_mask(proxy_logits, last_token_id)
@@ -88,6 +91,6 @@ class ProxyLogitsGuidedWatermarker:
         
         #Insert Bias
         watermarked_logits = main_logits.clone()
-        watermarked_logits[green_mask] += self.delta
+        watermarked_logits[green_mask] += _delta
         
         return watermarked_logits, True

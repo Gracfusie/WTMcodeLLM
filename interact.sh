@@ -1,2 +1,2 @@
 source env.sh 
-python interact.py
+python interact.py $@

@@ -91,6 +91,11 @@ class RequestState:
     prompt_tok_ids: List[int]
     output_tok_ids: List[int]
     next_tok_logits: torch.Tensor = None
+    watermarked_count: int = 0
+    non_watermarked_count: int = 0
+    entropy_threshold: Optional[float] = None
+    delta: Optional[float] = None
+    window_size: Optional[int] = None
 
 class ProxyModelManager:
 
@@ -126,8 +131,12 @@ class ProxyModelManager:
 
     @classmethod
     def validate_params(cls, params: SamplingParams):
-        # 我们暂时不通过 params.extra_args 传递参数。因为那需要调用者设置。
-        return None
+        overrides = {}
+        if params.extra_args:
+            for key in ['watermark_entropy_threshold', 'watermark_delta', 'watermark_proxy_window_size']:
+                if key in params.extra_args:
+                    overrides[key] = params.extra_args[key]
+        return overrides if overrides else None
     
     # 注意：BatchUpdate 的注释中有写 the `output_tok_ids` list (which is an element of each
     # tuple in `added`) is a reference to the request's running output tokens
@@ -139,7 +148,7 @@ class ProxyModelManager:
                 assert prompt_tok_ids is not None, "只支持对话模式"
                 
                 assert params is not None
-                self.validate_params(params)
+                overrides = self.validate_params(params)
                 if (id(output_tok_ids) in self.req_info_by_obj):
                     request_state = self.req_info_by_obj[id(output_tok_ids)]
                     print ("加回一个曾经处理过的 request")
@@ -147,15 +156,27 @@ class ProxyModelManager:
                     request_state = RequestState(
                         kv_cache=None,
                         prompt_tok_ids=prompt_tok_ids,
-                        output_tok_ids=output_tok_ids
+                        output_tok_ids=output_tok_ids,
+                        entropy_threshold=overrides.get('watermark_entropy_threshold') if overrides else None,
+                        delta=overrides.get('watermark_delta') if overrides else None,
+                        window_size=overrides.get('watermark_proxy_window_size') if overrides else None,
                     )
-                    print ("创建新 Request 对象")
+                    if overrides:
+                        console.print(f"🔥 收到带 OVERRIDE 的 Request: {overrides}", style="bold bright_magenta")
+                    else:
+                        print ("创建新 Request 对象")
                 self.req_info_by_idx[index] = request_state
                 self.req_info_by_obj[id(output_tok_ids)] = request_state
 
             if self.req_info_by_idx:
                 # Process removed requests.
                 for index in batch_update.removed:
+                    req_state = self.req_info_by_idx.get(index)
+                    if req_state and req_state.output_tok_ids:
+                        last_token = req_state.output_tok_ids[-1]
+                        eos_id = self.main_tokenizer.eos_token_id
+                        if last_token == eos_id:
+                            console.print(f"[Stats] Watermarked: {req_state.watermarked_count}, Non-watermarked: {req_state.non_watermarked_count}", style="bold yellow")
                     self.req_info_by_idx.pop(index, None)
 
                 # Process moved requests, unidirectional move (a->b) and swap
@@ -177,8 +198,9 @@ class ProxyModelManager:
         with torch.inference_mode():
             for req_state in self.req_info_by_idx.values():
 
-                if EnvConfig.window_size > 0:
-                    proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids[-EnvConfig.window_size:] + self.suffix_tok_ids
+                window_size = req_state.window_size if req_state.window_size is not None else EnvConfig.window_size
+                if window_size > 0:
+                    proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids[-window_size:] + self.suffix_tok_ids
                 else:
                     proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids + self.suffix_tok_ids
 

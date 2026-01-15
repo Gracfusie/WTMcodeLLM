@@ -1,5 +1,6 @@
 import os
 import json
+from typing import Optional
 from rich.console import Console
 
 class EnvConfig:
@@ -23,4 +24,5 @@ console.print("水印相关环境配置:", style="bold bright_red")
 console.print(f"熵阈值: {EnvConfig.watermark_entropy_threshold}", style="bold bright_red")
 console.print(f"Delta: {EnvConfig.watermark_delta}", style="bold bright_red")
 console.print(f"密钥: {EnvConfig.watermark_secret_key}", style="bold bright_red")
+console.print(f"窗口大小: {EnvConfig.window_size}", style="bold bright_red")
 console.print("-" * 100, style="bold bright_red")
