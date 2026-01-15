@@ -1,109 +1,126 @@
-from __future__ import annotations
-
-import sys
-from pathlib import Path
-
+import os
+import time
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM
-
 from vllm.config import VllmConfig
 from vllm.sampling_params import SamplingParams
-from vllm.multimodal.registry import cached_tokenizer_from_config
+from vllm.tokenizers import cached_tokenizer_from_config
+from vllm.v1.sample.logits_processor import (BatchUpdate,
+                                            LogitsProcessor,
+                                            MoveDirectionality)
 
-# 确保 third_party/WLLM 目录在 sys.path 
-_WLLM_DIR = Path(__file__).resolve().parents[2] / "third_party" / "WLLM"
-if str(_WLLM_DIR) not in sys.path:
-    sys.path.insert(0, str(_WLLM_DIR))
+from logits_processors.utils.proxy_model import ProxyModelManager
+from logits_processors.utils.watermark import ProxyLogitsGuidedWatermarker
+from config import EnvConfig
 
-# from third_party.WLLM.extended_watermark_processor import WatermarkLogitsProcessor
-from logits_processors.vllm_adapters.hf_logits_processor_adapter import (
-    HFLogitsProcessorAdapter,
-)
+class WatermarkVLLMAdapter(LogitsProcessor):
+    """将 HuggingFace 的 LogitsProcessor 适配为 vLLM 批处理接口。支持 Batch Update。"""
 
-_ROOT_DIR = Path(__file__).resolve().parents[2] 
-if str(_ROOT_DIR) not in sys.path:
-    sys.path.insert(0, str(_ROOT_DIR))
-from watermark import LogitsGuidedWatermarker
-
-
-class WatermarkVLLMAdapter(HFLogitsProcessorAdapter):
-    """
-    vLLM 适配器：集成 ProxyLogitsGuidedWatermarker。
-    参数：
-    - proxy_model_name: 我们用来生成logits的小模型的名称
-    - entropy_threshold: 熵阈值
-    - secret_key: 水印密钥
-    """
-
-    def __init__(
-        self,
-        vllm_config: VllmConfig,
-        device: torch.device,
-        is_pin_memory: bool,
-        # [CHANGE THIS] proxy logit generator name here
-        proxy_model_name: str = "code_completion_model",
-        entropy_threshold: float = 0.5,
-        secret_key: int = 12345
-    ) -> None:
-        tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
-        if tokenizer is None:
-            raise RuntimeError("WatermarkVLLMAdapter requires tokenizer from vLLM cache.")
-
-        # initialize class
-        super().__init__(
-            vllm_config=vllm_config,
-            device=device,
-            is_pin_memory=is_pin_memory,
-            hf_processor_cls=None, 
-            hf_init_kwargs={},
-            argmax_invariant=False,
-            extra_kwargs_from_params=None,
-        )
-
-        self.device = device
-        
-        # Load the proxy model
-        print(f"[Watermark] Loading Proxy Model: {proxy_model_name}...")
-        self.proxy_model = AutoModelForCausalLM.from_pretrained(proxy_model_name).to(self.device)
-        self.proxy_model.eval()
-
-        # initialize watermarking logic
+    def __init__(self, vllm_config: "VllmConfig", device: torch.device,
+                is_pin_memory: bool):
+        self.tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
+        self.proxy_model_manager = ProxyModelManager(main_tokenizer=self.tokenizer, device=device, is_pin_memory=is_pin_memory)
+        # 这个 vocab size 真的对吗？感觉不太对，需要再检查一下
         self.watermarker = ProxyLogitsGuidedWatermarker(
-            entropy_threshold=entropy_threshold,
-            delta=2.0,
-            vocab_size=len(tokenizer.get_vocab()),
-            secret_key=secret_key
+            entropy_threshold=EnvConfig.watermark_entropy_threshold, 
+            delta=EnvConfig.watermark_delta, 
+            vocab_size=len(self.proxy_model_manager.main_tokenizer.get_vocab()), 
+            secret_key=EnvConfig.watermark_secret_key
         )
-
-    def __call__(self, prompt_tokens_ids, past_token_ids, scores):
-        # 准备 Input IDs
-        current_seq_ids = prompt_tokens_ids + past_token_ids
-        input_ids = torch.tensor([current_seq_ids], device=self.device)
-
-        # 运行 Proxy 模型 (No Grad)
-        with torch.no_grad():
-
-            # [(maybe)CHANGE THIS]为了防止OOM这里简单的写了截断逻辑
-            proxy_input = input_ids if input_ids.shape[1] < 1024 else input_ids[:, -1024:]
-            proxy_outputs = self.proxy_model(proxy_input)
-            proxy_logits = proxy_outputs.logits[:, -1, :]
-
-            # [(maybe)CHANGE THIS] 把词表粗爆对齐
-            if proxy_logits.shape[-1] != scores.shape[-1]:
-                min_vocab = min(proxy_logits.shape[-1], scores.shape[-1])
-                proxy_logits = proxy_logits[:, :min_vocab]
-
-        # 调用水印逻辑
-        final_logits, applied = self.watermarker.process_logits(
-            input_ids=input_ids,
-            main_logits=scores,
-            proxy_logits=proxy_logits
-        )
-
-        return final_logits
+        self.debug_enabled = os.environ.get('WATERMARK_DEBUG', '0') == '1'
 
     @classmethod
-    def validate_params(cls, sampling_params: SamplingParams):
-        return None
+    def validate_params(cls, params: SamplingParams):
+        return ProxyModelManager.validate_params(params)
 
+    # 最高概率 token 可能在 redlist
+    def is_argmax_invariant(self) -> bool:
+        return False
+
+    def update_state(self, batch_update: BatchUpdate | None):
+        if self.debug_enabled:
+            start_time = time.perf_counter()
+        result = self.proxy_model_manager.update_state(batch_update)
+        if self.debug_enabled:
+            elapsed = time.perf_counter() - start_time
+            print(f"[TIMING] update_state: {elapsed*1000:.2f}ms")
+        return result
+
+    def _debug_output(self, input_ids: torch.Tensor, main_logits: torch.Tensor, proxy_logits: torch.Tensor, watermarked_logits: torch.Tensor, applied: bool):
+        print("\n" + "="*80)
+        print(f"WATERMARK DEBUG - Applied: {applied}")
+        print("="*80)
+        
+        context_text = self.tokenizer.decode(input_ids[0].tolist(), skip_special_tokens=False)
+        print(f"Context: {repr(context_text)}")
+        
+        vocab_size = min(proxy_logits.shape[-1], main_logits.shape[-1])
+        main_probs_full = F.softmax(main_logits[0][:vocab_size], dim=-1)
+        proxy_probs_full = F.softmax(proxy_logits[0][:vocab_size], dim=-1)
+        
+        kl_divergence = F.kl_div(
+            F.log_softmax(proxy_logits[0][:vocab_size], dim=-1),
+            main_probs_full,
+            reduction='batchmean'
+        ).item()
+        
+        print(f"\nKL Divergence (proxy||main): {kl_divergence:.6f}")
+        
+        main_probs = F.softmax(main_logits[0], dim=-1)
+        main_top10 = torch.topk(main_probs, k=10)
+        print("\nMain Model Top-10:")
+        for i, (prob, idx) in enumerate(zip(main_top10.values.tolist(), main_top10.indices.tolist())):
+            token_text = self.tokenizer.decode([idx])
+            print(f"  {i+1}. [{idx:5d}] {repr(token_text):20s} {prob:.6f}")
+        
+        proxy_probs = F.softmax(proxy_logits[0], dim=-1)
+        proxy_top10 = torch.topk(proxy_probs, k=10)
+        print("\nProxy Model Top-10:")
+        for i, (prob, idx) in enumerate(zip(proxy_top10.values.tolist(), proxy_top10.indices.tolist())):
+            token_text = self.tokenizer.decode([idx])
+            print(f"  {i+1}. [{idx:5d}] {repr(token_text):20s} {prob:.6f}")
+        
+        watermarked_probs = F.softmax(watermarked_logits[0], dim=-1)
+        watermarked_top10 = torch.topk(watermarked_probs, k=10)
+        print("\nWatermarked Model Top-10:")
+        for i, (prob, idx) in enumerate(zip(watermarked_top10.values.tolist(), watermarked_top10.indices.tolist())):
+            token_text = self.tokenizer.decode([idx])
+            print(f"  {i+1}. [{idx:5d}] {repr(token_text):20s} {prob:.6f}")
+        
+        print("="*80 + "\n")
+
+    def apply(self, logits: torch.Tensor) -> torch.Tensor:
+        if self.debug_enabled:
+            start_time = time.perf_counter()
+
+        # sanity check
+        assert len(logits) == len(self.proxy_model_manager.req_info_by_idx), "logits 和 request 数量不一致"
+
+        for i in range(len(logits)):
+            req_state = self.proxy_model_manager.req_info_by_idx[i]
+
+            if req_state.output_tok_ids:
+                last_token_id = req_state.output_tok_ids[-1]
+            else:
+                last_token_id = 0
+
+            main_logits_unsqueezed = logits[i].unsqueeze(0)
+            proxy_logits_unsqueezed = req_state.next_tok_logits.unsqueeze(0)
+            
+            new_logits, applied = self.watermarker.process_logits(
+                last_token_id=last_token_id,
+                main_logits=main_logits_unsqueezed,
+                proxy_logits=proxy_logits_unsqueezed,
+            )
+            
+            if self.debug_enabled:
+                input_ids = torch.tensor(req_state.prompt_tok_ids + req_state.output_tok_ids, device=logits.device, dtype=torch.long).unsqueeze(0)
+                self._debug_output(input_ids, main_logits_unsqueezed, proxy_logits_unsqueezed, new_logits, applied)
+            
+            logits[i] = new_logits.squeeze(0)
+
+        if self.debug_enabled:
+            elapsed = time.perf_counter() - start_time
+            print(f"[TIMING] apply: {elapsed*1000:.2f}ms")
+
+        return logits

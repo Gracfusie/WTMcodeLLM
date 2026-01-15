@@ -14,9 +14,10 @@ from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
+from config import EnvConfig
 
 # 加载 WLLM watermark detector
-_WLLM_DIR = Path(__file__).resolve().parents[1] / "third_party" / "WLLM"
+_WLLM_DIR = Path(__file__).parent / "third_party" / "WLLM"
 if str(_WLLM_DIR) not in sys.path:
     sys.path.insert(0, str(_WLLM_DIR))
 
@@ -32,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("MODEL_NAME", "openai/gpt-oss-20b"),
+        default=os.environ.get("MAIN_MODEL", "openai/gpt-oss-20b"),
         help="模型名称或路径，默认 openai/gpt-oss-20b",
     )
     parser.add_argument(
@@ -55,8 +56,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-tokens",
         type=int,
-        default=32768,
-        help="回复最大生成 token 数，默认 32768",
+        default=8*1024,
+        help="回复最大生成 token 数，默认 8k",
     )
     parser.add_argument(
         "--reasoning-effort",
