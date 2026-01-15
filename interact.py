@@ -14,25 +14,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("MAIN_MODEL", "openai/gpt-oss-20b"),
-        help="模型名称或路径，默认 openai/gpt-oss-20b",
+        type=str,
+        default=None,
+        help="模型名称或路径，默认 None",
     )
     parser.add_argument(
         "--api-key",
         default=os.environ.get("OPENAI_API_KEY", "EMPTY"),
         help="API key（本地可用占位值）",
-    )
-    parser.add_argument(
-        "--temperature",
-        type=float,
-        default=1.0,
-        help="采样 temperature，默认 1.0",
-    )
-    parser.add_argument(
-        "--top-p",
-        type=float,
-        default=1.0,
-        help="采样 top_p，默认 1.0",
     )
     parser.add_argument(
         "--max-tokens",
@@ -71,8 +60,6 @@ def chat_once(
     client: OpenAI,
     model: str,
     messages: list,
-    temperature: float,
-    top_p: float,
     max_tokens: int,
     reasoning_effort: str,
     extra_body: dict = None,
@@ -80,8 +67,6 @@ def chat_once(
     resp = client.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=temperature,
-        top_p=top_p,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
         extra_body=extra_body,
@@ -129,8 +114,6 @@ def main():
                 client,
                 args.model,
                 messages,
-                args.temperature,
-                args.top_p,
                 args.max_tokens,
                 args.reasoning_effort,
                 {"vllm_xargs": extra_args} if extra_args else None,

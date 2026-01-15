@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-简单 CLI：与本地 vLLM OpenAI 兼容端点交互，验证 gpt-oss-20b 部署。
-默认采样参数 temperature=1.0, top_p=1.0。
-"""
 
 import argparse
 import os
@@ -42,18 +38,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="API key（本地可用占位值）",
     )
     parser.add_argument(
-        "--temperature",
-        type=float,
-        default=1.0,
-        help="采样 temperature，默认 1.0",
-    )
-    parser.add_argument(
-        "--top-p",
-        type=float,
-        default=1.0,
-        help="采样 top_p，默认 1.0",
-    )
-    parser.add_argument(
         "--max-tokens",
         type=int,
         default=8*1024,
@@ -84,16 +68,12 @@ def chat_once(
     client: OpenAI,
     model: str,
     messages: list,
-    temperature: float,
-    top_p: float,
     max_tokens: int,
     reasoning_effort: str,
 ) -> str:
     resp = client.chat.completions.create(
         model=model,
         messages=messages,
-        temperature=temperature,
-        top_p=top_p,
         max_tokens=max_tokens,
         reasoning_effort=reasoning_effort,
     )
@@ -160,8 +140,6 @@ def main():
                 client,
                 args.model,
                 messages,
-                args.temperature,
-                args.top_p,
                 args.max_tokens,
                 args.reasoning_effort,
             )
