@@ -40,7 +40,6 @@ def build_parser() -> argparse.ArgumentParser:
         default="proxy",
         help="选择检测算法: 'wllm' (Baseline) 或 'proxy' (基于小模型)"
     )
-
     parser.add_argument("--proxy-model", default="Qwen/Qwen2.5-Coder-1.5B-Instruct", help="[Proxy模式] Proxy 模型路径")
     parser.add_argument("--entropy-threshold", type=float, default=0.5, help="[Proxy模式] 熵阈值")
     parser.add_argument("--secret-key", type=int, default=42, help="[Proxy模式] 密钥")

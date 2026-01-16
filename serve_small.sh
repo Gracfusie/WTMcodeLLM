@@ -1,7 +1,7 @@
 #!/bin/bash
 source env.sh
 
-LARGE_GPU_MEM=0.80
+LARGE_GPU_MEM=0.60
 MAX_MODEL_LEN=32768 # 写代码不太可能要 32k 以上
 
 
