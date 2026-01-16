@@ -2,6 +2,7 @@ import torch
 import torch.nn.functional as F
 import hashlib
 import math
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class ProxyLogitsGuidedWatermarker:
     """
@@ -97,82 +98,93 @@ class ProxyLogitsGuidedWatermarker:
         return watermarked_logits, True
 
 class ProxyWatermarkDetector:
-    def __init__(self, watermarker, proxy_model, tokenizer, device):
+    def __init__(self, watermarker, proxy_model, tokenizer, device, 
+                 prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
         self.watermarker = watermarker
         self.proxy_model = proxy_model
         self.tokenizer = tokenizer
         self.device = device
+        self.prefix_ids = prefix_ids
+        self.suffix_ids = suffix_ids
+        self.window_size = window_size
 
-    def detect(self, text: str, context: str = None, z_threshold: float = 4.0):
-        if context:
-            context_inputs = self.tokenizer(context, return_tensors="pt", add_special_tokens=True)
-            context_ids = context_inputs.input_ids.to(self.device)
-        else:
-            context_ids = torch.empty((1, 0), dtype=torch.long, device=self.device)
-
+    def detect(self, text: str, z_threshold: float = 4.0):
+        #编码 Answer
         text_inputs = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)
-        text_ids = text_inputs.input_ids.to(self.device)
+        output_tok_ids = text_inputs.input_ids[0].tolist()
         
-        if text_ids.size(1) == 0:
-             return {"error": "Text too short"}
+        if len(output_tok_ids) == 0:
+             return {"error": "Text too short", "prediction": False}
 
-        # 初始化变量
-        past_key_values = None
-        last_token_id = None
-        next_token_logits = None
-        # 整个 context 一次性喂给 Proxy
-        if context_ids.size(1) > 0:
-            with torch.no_grad():
-                outputs = self.proxy_model(context_ids, use_cache=True)
-                past_key_values = outputs.past_key_values
-                next_token_logits = outputs.logits[:, -1, :]
-                last_token_id = context_ids[0, -1].item()
-
-        num_tokens = text_ids.size(1)
+        num_tokens = len(output_tok_ids)
         green_tokens = 0
-        total_scored = 0 
+        total_scored = 0
         
+        #逐个Token检测
         for i in range(num_tokens):
-            target_token_id = text_ids[0, i].item() #current word
-            if next_token_logits is not None:
-                #watermark logic
-
-                #entropy check
-                entropy = self.watermarker._compute_entropy(next_token_logits)
-                
-                if entropy >= self.watermarker.entropy_threshold:
-                    total_scored += 1
-                    green_mask = self.watermarker._get_green_list_mask(next_token_logits, last_token_id)
-                    
-                    if target_token_id < green_mask.size(1):
-                        if green_mask[0, target_token_id]:
-                            green_tokens += 1
+            target_token_id = output_tok_ids[i]
             
-            #update KV cache
-            current_input = text_ids[:, i].unsqueeze(1) # shape [1, 1]
+            #Prefix + Context(Windowed) + Suffix
+            current_generated = output_tok_ids[:i]
             
+            if self.window_size > 0 and len(current_generated) > self.window_size:
+                context_part = current_generated[-self.window_size:]
+            else:
+                context_part = current_generated
+            
+            proxy_in_tok_ids = self.prefix_ids + context_part + self.suffix_ids
+            in_tensor = torch.tensor([proxy_in_tok_ids], device=self.device, dtype=torch.long)
+            
+            #model forward
             with torch.no_grad():
-                outputs = self.proxy_model(current_input, past_key_values=past_key_values, use_cache=True)
-                past_key_values = outputs.past_key_values
-                next_token_logits = outputs.logits[:, -1, :]
-                last_token_id = target_token_id #update seed
+                outputs = self.proxy_model(input_ids=in_tensor, return_dict=True)
+                next_tok_logits = outputs.logits[0, -1, :].unsqueeze(0)
+                
+            #seed from last token id
+            if i > 0:
+                last_token_id = output_tok_ids[i-1]
+            else:
+                # 第一个 token 没有上文生成的词做 seed，跳过检测
+                continue
+
+            #水印判定
+            entropy = self.watermarker._compute_entropy(next_tok_logits)
+            
+            if entropy >= self.watermarker.entropy_threshold:
+                total_scored += 1
+                
+                # 计算红绿名单 mask，形状为 (1, vocab_size)
+                green_mask = self.watermarker._get_green_list_mask(next_tok_logits, last_token_id)
+                
+                # 判定是否命中
+                if target_token_id < green_mask.size(1):
+                    is_green = green_mask[0, target_token_id].item()
+                    if is_green:
+                        green_tokens += 1
 
         return self._calculate_scores(green_tokens, total_scored, z_threshold)
 
     def _calculate_scores(self, green_tokens, total_scored, z_threshold):
         if total_scored == 0:
-            return {"num_green_tokens": 0, "num_tokens_scored": 0, "z_score": 0.0, "p_value": 1.0, "prediction": False, "confidence": 0.0, "green_fraction": 0.0}
+            return {
+                "num_green_tokens": 0, "num_tokens_scored": 0, 
+                "z_score": 0.0, "p_value": 1.0, "prediction": False, 
+                "confidence": 0.0, "green_fraction": 0.0
+            }
+            
         gamma = 0.5 
         expected_green = total_scored * gamma
         std_dev = math.sqrt(total_scored * gamma * (1 - gamma))
+        
         z_score = (green_tokens - expected_green) / std_dev
         prediction = z_score > z_threshold
         green_fraction = green_tokens / total_scored
+        
         return {
             "num_green_tokens": green_tokens,
             "num_tokens_scored": total_scored,
             "green_fraction": green_fraction,
             "z_score": z_score,
             "prediction": prediction,
-            "p_value": 0.0
+            "p_value": 0.0 
         }
