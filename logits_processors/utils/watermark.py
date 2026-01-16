@@ -102,8 +102,9 @@ class ProxyWatermarkDetector:
                  prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
         self.watermarker = watermarker
         self.proxy_model = proxy_model
-        self.tokenizer = tokenizer
+        self.tokenizer = tokenizer #proxy model的tokenizer
         self.device = device
+        # proxy model的prefix, suffix以及window
         self.prefix_ids = prefix_ids
         self.suffix_ids = suffix_ids
         self.window_size = window_size
@@ -144,7 +145,7 @@ class ProxyWatermarkDetector:
             if i > 0:
                 last_token_id = output_tok_ids[i-1]
             else:
-                # 第一个 token 没有上文生成的词做 seed，跳过检测
+                # 因为没有prompt,第一个 token 没有上文生成的词做 seed，跳过检测（可以有检测第一个词的方法吗？）
                 continue
 
             #水印判定
@@ -172,6 +173,7 @@ class ProxyWatermarkDetector:
                 "confidence": 0.0, "green_fraction": 0.0
             }
             
+        # 没有水印情况下的绿词出现概率：0.5
         gamma = 0.5 
         expected_green = total_scored * gamma
         std_dev = math.sqrt(total_scored * gamma * (1 - gamma))
@@ -186,5 +188,5 @@ class ProxyWatermarkDetector:
             "green_fraction": green_fraction,
             "z_score": z_score,
             "prediction": prediction,
-            "p_value": 0.0 
+            "p_value": 0.0 #先不算，需要吗？
         }
