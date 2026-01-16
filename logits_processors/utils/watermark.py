@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import hashlib
 import math
 from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class ProxyLogitsGuidedWatermarker:
     """
@@ -100,6 +101,8 @@ class ProxyLogitsGuidedWatermarker:
 class ProxyWatermarkDetector:
     def __init__(self, watermarker, proxy_model, tokenizer, device, 
                  prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
+    def __init__(self, watermarker, proxy_model, tokenizer, device, 
+                 prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
         self.watermarker = watermarker
         self.proxy_model = proxy_model
         self.tokenizer = tokenizer #proxy model的tokenizer
@@ -113,16 +116,37 @@ class ProxyWatermarkDetector:
         #编码 Answer
         text_inputs = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)
         output_tok_ids = text_inputs.input_ids[0].tolist()
+        output_tok_ids = text_inputs.input_ids[0].tolist()
         
+        if len(output_tok_ids) == 0:
+             return {"error": "Text too short", "prediction": False}
+
+        num_tokens = len(output_tok_ids)
         if len(output_tok_ids) == 0:
              return {"error": "Text too short", "prediction": False}
 
         num_tokens = len(output_tok_ids)
         green_tokens = 0
         total_scored = 0
+        total_scored = 0
         
         #逐个Token检测
+        #逐个Token检测
         for i in range(num_tokens):
+            target_token_id = output_tok_ids[i]
+            
+            #Prefix + Context(Windowed) + Suffix
+            current_generated = output_tok_ids[:i]
+            
+            if self.window_size > 0 and len(current_generated) > self.window_size:
+                context_part = current_generated[-self.window_size:]
+            else:
+                context_part = current_generated
+            
+            proxy_in_tok_ids = self.prefix_ids + context_part + self.suffix_ids
+            in_tensor = torch.tensor([proxy_in_tok_ids], device=self.device, dtype=torch.long)
+            
+            #model forward
             target_token_id = output_tok_ids[i]
             
             #Prefix + Context(Windowed) + Suffix
@@ -173,14 +197,17 @@ class ProxyWatermarkDetector:
                 "confidence": 0.0, "green_fraction": 0.0
             }
             
+            
         # 没有水印情况下的绿词出现概率：0.5
         gamma = 0.5 
         expected_green = total_scored * gamma
         std_dev = math.sqrt(total_scored * gamma * (1 - gamma))
         
+        
         z_score = (green_tokens - expected_green) / std_dev
         prediction = z_score > z_threshold
         green_fraction = green_tokens / total_scored
+        
         
         return {
             "num_green_tokens": green_tokens,
