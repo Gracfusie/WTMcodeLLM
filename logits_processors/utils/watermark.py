@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 import hashlib
+import math
 
 class ProxyLogitsGuidedWatermarker:
     """
@@ -94,3 +95,84 @@ class ProxyLogitsGuidedWatermarker:
         watermarked_logits[green_mask] += _delta
         
         return watermarked_logits, True
+
+class ProxyWatermarkDetector:
+    def __init__(self, watermarker, proxy_model, tokenizer, device):
+        self.watermarker = watermarker
+        self.proxy_model = proxy_model
+        self.tokenizer = tokenizer
+        self.device = device
+
+    def detect(self, text: str, context: str = None, z_threshold: float = 4.0):
+        if context:
+            context_inputs = self.tokenizer(context, return_tensors="pt", add_special_tokens=True)
+            context_ids = context_inputs.input_ids.to(self.device)
+        else:
+            context_ids = torch.empty((1, 0), dtype=torch.long, device=self.device)
+
+        text_inputs = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)
+        text_ids = text_inputs.input_ids.to(self.device)
+        
+        if text_ids.size(1) == 0:
+             return {"error": "Text too short"}
+
+        # 初始化变量
+        past_key_values = None
+        last_token_id = None
+        next_token_logits = None
+        # 整个 context 一次性喂给 Proxy
+        if context_ids.size(1) > 0:
+            with torch.no_grad():
+                outputs = self.proxy_model(context_ids, use_cache=True)
+                past_key_values = outputs.past_key_values
+                next_token_logits = outputs.logits[:, -1, :]
+                last_token_id = context_ids[0, -1].item()
+
+        num_tokens = text_ids.size(1)
+        green_tokens = 0
+        total_scored = 0 
+        
+        for i in range(num_tokens):
+            target_token_id = text_ids[0, i].item() #current word
+            if next_token_logits is not None:
+                #watermark logic
+
+                #entropy check
+                entropy = self.watermarker._compute_entropy(next_token_logits)
+                
+                if entropy >= self.watermarker.entropy_threshold:
+                    total_scored += 1
+                    green_mask = self.watermarker._get_green_list_mask(next_token_logits, last_token_id)
+                    
+                    if target_token_id < green_mask.size(1):
+                        if green_mask[0, target_token_id]:
+                            green_tokens += 1
+            
+            #update KV cache
+            current_input = text_ids[:, i].unsqueeze(1) # shape [1, 1]
+            
+            with torch.no_grad():
+                outputs = self.proxy_model(current_input, past_key_values=past_key_values, use_cache=True)
+                past_key_values = outputs.past_key_values
+                next_token_logits = outputs.logits[:, -1, :]
+                last_token_id = target_token_id #update seed
+
+        return self._calculate_scores(green_tokens, total_scored, z_threshold)
+
+    def _calculate_scores(self, green_tokens, total_scored, z_threshold):
+        if total_scored == 0:
+            return {"num_green_tokens": 0, "num_tokens_scored": 0, "z_score": 0.0, "p_value": 1.0, "prediction": False, "confidence": 0.0, "green_fraction": 0.0}
+        gamma = 0.5 
+        expected_green = total_scored * gamma
+        std_dev = math.sqrt(total_scored * gamma * (1 - gamma))
+        z_score = (green_tokens - expected_green) / std_dev
+        prediction = z_score > z_threshold
+        green_fraction = green_tokens / total_scored
+        return {
+            "num_green_tokens": green_tokens,
+            "num_tokens_scored": total_scored,
+            "green_fraction": green_fraction,
+            "z_score": z_score,
+            "prediction": prediction,
+            "p_value": 0.0
+        }
