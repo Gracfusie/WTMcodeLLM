@@ -6,6 +6,7 @@ from pathlib import Path
 import torch
 from openai import OpenAI
 from transformers import AutoTokenizer, AutoModelForCausalLM
+
 _WLLM_DIR = Path(__file__).parent / "third_party" / "WLLM"
 if str(_WLLM_DIR) not in sys.path:
     sys.path.insert(0, str(_WLLM_DIR))
@@ -13,6 +14,7 @@ try:
     from extended_watermark_processor import WatermarkDetector as WLLMWatermarkDetector
 except ImportError:
     print("[Warning] 未找到 WLLM 模块 (extended_watermark_processor)")
+
 _ACW_DIR = Path(__file__).parent / "logits_processors" / "utils"
 if str(_ACW_DIR) not in sys.path:
     sys.path.insert(0, str(_ACW_DIR))
@@ -30,7 +32,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-tokens", type=int, default=8*1024)
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default="high")
     
-    # 水印参数
     parser.add_argument("--enable-watermark-detection", action="store_true", default=True, help="启用水印检测")
     parser.add_argument("--z-threshold", type=float, default=4.0, help="Z-score 阈值")
     parser.add_argument(
@@ -40,7 +41,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="选择检测算法: 'wllm' (Baseline) 或 'proxy' (基于小模型)"
     )
 
-    # Proxy 模式参数
     parser.add_argument("--proxy-model", default="Qwen/Qwen2.5-Coder-1.5B-Instruct", help="[Proxy模式] Proxy 模型路径")
     parser.add_argument("--entropy-threshold", type=float, default=0.5, help="[Proxy模式] 熵阈值")
     parser.add_argument("--secret-key", type=int, default=42, help="[Proxy模式] 密钥")
@@ -69,15 +69,18 @@ def main():
     detector_type = "None"
 
     if args.enable_watermark_detection:
-        
-        #proxy模式
         if args.detection_method == "proxy":
             print(f"[Init] 初始化 Proxy-Guided 检测器...")
             print(f" Proxy Model: {args.proxy_model} | Threshold: {args.entropy_threshold}")
             try:
-                # 加载 Proxy的tokenizer
-                proxy_tokenizer = AutoTokenizer.from_pretrained(args.proxy_model)
-                proxy_model = AutoModelForCausalLM.from_pretrained(args.proxy_model).to(device).eval()
+                try:
+                    from modelscope import snapshot_download
+                    model_path = snapshot_download(args.proxy_model)
+                except ImportError:
+                    model_path = args.proxy_model
+
+                proxy_tokenizer = AutoTokenizer.from_pretrained(model_path)
+                proxy_model = AutoModelForCausalLM.from_pretrained(model_path).to(device).eval()
                 
                 core_logic = ProxyLogitsGuidedWatermarker(
                     entropy_threshold=args.entropy_threshold,
@@ -85,15 +88,28 @@ def main():
                     secret_key=args.secret_key
                 )
                 
+                # 获取模板配置
+                prefix_str = os.environ.get("WATERMARK_PROXY_TEMPLATE_PREFIX", "<|fim_prefix|>")
+                suffix_str = os.environ.get("WATERMARK_PROXY_TEMPLATE_SUFFIX", "<|fim_suffix|>\n<|fim_middle|>")
+                window_size = int(os.environ.get("WATERMARK_PROXY_WINDOW_SIZE", -1))
+
+                prefix_ids = proxy_tokenizer.encode(prefix_str, add_special_tokens=False)
+                suffix_ids = proxy_tokenizer.encode(suffix_str, add_special_tokens=False)
+                
                 watermark_detector = ProxyWatermarkDetector(
                     watermarker=core_logic,
                     proxy_model=proxy_model,
                     tokenizer=proxy_tokenizer,
-                    device=device
+                    device=device,
+                    prefix_ids=prefix_ids,
+                    suffix_ids=suffix_ids,
+                    window_size=window_size
                 )
                 detector_type = "Proxy"
                 print("[Init] Proxy 检测器就绪。")
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 print(f"[Error] Proxy 检测器初始化失败: {e}")
 
         elif args.detection_method == "wllm":
