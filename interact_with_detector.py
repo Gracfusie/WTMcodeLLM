@@ -10,7 +10,7 @@ from pathlib import Path
 
 import torch
 from transformers import AutoTokenizer
-from config import EnvConfig
+# from config import EnvConfig
 
 # 加载 WLLM watermark detector
 _WLLM_DIR = Path(__file__).parent / "third_party" / "WLLM"
@@ -29,7 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("MAIN_MODEL", "openai/gpt-oss-20b"),
+        # default=os.environ.get("MAIN_MODEL", "openai/gpt-oss-20b"),
+        default=None,
         help="模型名称或路径，默认 openai/gpt-oss-20b",
     )
     parser.add_argument(
@@ -52,7 +53,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--enable-watermark-detection",
         action="store_true",
-        default=False,
+        default=True,
         help="启用水印检测",
     )
     parser.add_argument(
@@ -94,15 +95,16 @@ def main():
     watermark_detector = None
     if args.enable_watermark_detection:
         try:
-            # 加载 tokenizer（对应 gpt-oss-20b）
-            print("[Watermark] 加载 tokenizer...")
-            tokenizer = AutoTokenizer.from_pretrained("openai/gpt-oss-20b")
-            print("[Watermark] tokenizer 加载完成")
+            # 加载与当前模型一致的 tokenizer（默认与 --model 同名）
+            print("[WTM Detector] 加载 tokenizer...")
+            tokenizer_name = args.model or "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+            tokenizer = AutoTokenizer.from_pretrained(tokenizer_name)
+            print(f"[WTM Detector] tokenizer ({tokenizer_name}) 加载完成")
 
             # 初始化检测器，参数与 serve.sh 中的 WatermarkVLLMAdapter 保持一致
             # 设备与 vLLM 服务端保持一致（优先 GPU，保证 RNG 一致性）
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            print(f"[Watermark] 使用设备: {device}")
+            print(f"[WTM Detector] 使用设备: {device} （需保证 RNG 一致性）")
             watermark_detector = WatermarkDetector(
                 vocab=list(tokenizer.get_vocab().values()),
                 gamma=0.25,  # 与 watermark_adapter.py 保持一致
@@ -112,11 +114,11 @@ def main():
                 tokenizer=tokenizer,
                 z_threshold=args.z_threshold,
                 normalizers=[],
-                ignore_repeated_bigrams=True,
+                ignore_repeated_ngrams=True,
             )
-            print("[Watermark] 检测器初始化完成\n")
+            print("[WTM Detector] 检测器初始化完成\n")
         except Exception as e:
-            print(f"[Watermark] 检测器初始化失败: {e}")
+            print(f"[WTM Detector] 检测器初始化失败: {e}")
             watermark_detector = None
 
     messages = []
