@@ -131,7 +131,6 @@ class ProxyWatermarkDetector:
         total_scored = 0
         
         #逐个Token检测
-        #逐个Token检测
         for i in range(num_tokens):
             target_token_id = output_tok_ids[i]
             
@@ -169,9 +168,8 @@ class ProxyWatermarkDetector:
             if i > 0:
                 last_token_id = output_tok_ids[i-1]
             else:
-                # 因为没有prompt,第一个 token 没有上文生成的词做 seed，跳过检测（可以有检测第一个词的方法吗？）
-                continue
-
+                last_token_id = 0
+                
             #水印判定
             entropy = self.watermarker._compute_entropy(next_tok_logits)
             
