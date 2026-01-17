@@ -247,7 +247,7 @@ class WatermarkVLLMAdapter(LogitsProcessor):
         elif self.algorithm == "wllm":
             self.impl = WLLM_VLLMAdapter(vllm_config, device, is_pin_memory)
 
-        elif self.algorithm="sweet":
+        elif self.algorithm=="sweet":
             self.impl=Sweet_VLLMAdapter(vllm_config, device, is_pin_memory)
         else:
             raise ValueError(f"Unknown watermark algorithm: {self.algorithm}")
