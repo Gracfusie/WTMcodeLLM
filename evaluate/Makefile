@@ -3,6 +3,10 @@
 PY ?= python
 RUNNER := runner.py
 
+# Watermark algorithm to include in output filenames and pass-through (default: proxy)
+# 现在仅用于标记输出文件名、传递参数，因此在不跑proxy模型的时候要注意 make grid WATERMARK_ALGORITHM=...
+WATERMARK_ALGORITHM ?= proxy
+
 # Core runtime controls (override via environment if needed)
 # Provide sensible defaults; user can override via environment.
 MODEL ?= None
@@ -25,7 +29,7 @@ all: grid
 
 # Grid run over hardcoded lists
 grid:
-	$(PY) $(RUNNER) \
+	WATERMARK_ALGORITHM=$(WATERMARK_ALGORITHM) $(PY) $(RUNNER) \
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \
@@ -38,7 +42,7 @@ grid:
 
 # Small built-in sweep when no explicit lists are provided
 default:
-	$(PY) $(RUNNER) \
+	WATERMARK_ALGORITHM=$(WATERMARK_ALGORITHM) $(PY) $(RUNNER) \
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \

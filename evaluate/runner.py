@@ -298,6 +298,7 @@ def build_output_stem(
     model: Optional[str],
     attack: str,
     params: WatermarkParams,
+    algorithm: Optional[str] = None,
 ) -> str:
     def sanitize(s: Optional[str]) -> str:
         if not s:
@@ -315,7 +316,9 @@ def build_output_stem(
     ent_s = f"ent{ent}" if ent is not None else "entNA"
     dlt_s = f"d{dlt}" if dlt is not None else "dNA"
     win_s = f"w{win}" if win is not None else "wNA"
-    return f"{base_stem}.{m}.{attack}.{ent_s}.{dlt_s}.{win_s}"
+    alg = algorithm or os.environ.get("WATERMARK_ALGORITHM", "unknown")
+    alg = alg.replace("/", "-").replace(":", "-").replace(" ", "-")
+    return f"{base_stem}.{m}.{attack}.{ent_s}.{dlt_s}.{win_s}.alg{alg}"
 
 
 def run() -> None:
@@ -394,6 +397,7 @@ def run() -> None:
                 "sample_raw": answer,
                 "sample_attacked": attacked,
                 "z_score": z,
+                "watermark_algorithm": (extra_args.get("watermark_algorithm") if extra_args and "watermark_algorithm" in extra_args else os.environ.get("WATERMARK_ALGORITHM", "unknown")),
                 "watermark_params": {
                     "entropy_threshold": wm_params.entropy_threshold,
                     "delta": wm_params.delta,
@@ -401,7 +405,8 @@ def run() -> None:
                 },
             }
 
-            stem = build_output_stem(item["stem"], args.model, args.attack, wm_params)
+            algorithm = result["watermark_algorithm"]
+            stem = build_output_stem(item["stem"], args.model, args.attack, wm_params, algorithm=algorithm)
             out_path = save_result(output_dir, result, stem)
             print(f"完成: z={z:.4f} -> {out_path}")
 
