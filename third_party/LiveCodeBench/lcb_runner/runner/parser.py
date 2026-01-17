@@ -138,28 +138,6 @@ def get_args():
         help="Limit the number of problems to evaluate (default: None, evaluates all problems). "
              "When used with --evaluate, only the first N problems will be evaluated.",
     )
-    # OpenRouter / Custom API support
-    parser.add_argument(
-        "--custom_endpoint",
-        type=str,
-        default=None,
-        help="Custom API endpoint URL (e.g., https://openrouter.ai/api/v1). "
-             "Can also be set via OPENROUTER_ENDPOINT environment variable.",
-    )
-    parser.add_argument(
-        "--custom_api_key",
-        type=str,
-        default=None,
-        help="Custom API key for the endpoint. "
-             "Can also be set via OPENROUTER_API_KEY environment variable.",
-    )
-    parser.add_argument(
-        "--custom_model_name",
-        type=str,
-        default=None,
-        help="Custom model name to use with the endpoint. "
-             "If not provided, --model will be used.",
-    )
 
     args = parser.parse_args()
 

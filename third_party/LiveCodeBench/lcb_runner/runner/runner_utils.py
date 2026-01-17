@@ -2,11 +2,6 @@ from lcb_runner.lm_styles import LMStyle, LanguageModel
 
 
 def build_runner(args, model: LanguageModel):
-    # Check for custom OpenRouter/API models first
-    if args.custom_endpoint or args.custom_api_key or args.custom_model_name:
-        from lcb_runner.runner.openrouter_runner import OpenRouterRunner
-        return OpenRouterRunner(args, model)
-    
     if model.model_style == LMStyle.OpenAIChat:
         from lcb_runner.runner.oai_runner import OpenAIRunner
 

@@ -1,9 +1,10 @@
 import os
 import json
+import random
 
 from lcb_runner.runner.parser import get_args
 from lcb_runner.utils.scenarios import Scenario
-from lcb_runner.lm_styles import LanguageModelStore, LanguageModel
+from lcb_runner.lm_styles import LanguageModelStore
 from lcb_runner.runner.runner_utils import build_runner
 from lcb_runner.utils.path_utils import get_output_path
 from lcb_runner.evaluation import extract_instance_results
@@ -131,35 +132,7 @@ def create_detailed_io_log(
 def main():
     args = get_args()
 
-    # Support for custom OpenRouter/API models
-    if args.custom_endpoint or args.custom_api_key or args.custom_model_name:
-        # Create a dynamic model for custom API
-        from datetime import datetime
-        from lcb_runner.lm_styles import LMStyle
-        
-        model_name = args.custom_model_name or args.model
-        # Sanitize model name for file paths (replace / and : with _)
-        model_repr = model_name.replace("/", "_").replace(":", "_")
-        
-        model = LanguageModel(
-            model_name=model_name,
-            model_repr=model_repr,
-            model_style=LMStyle.OpenAIChat,  # Use OpenAI format for OpenRouter
-            release_date=datetime.now(),
-            link=args.custom_endpoint or "custom",
-        )
-        print(f"Using custom API model: {model_name}")
-        print(f"Endpoint: {args.custom_endpoint or 'https://openrouter.ai/api/v1'}")
-    else:
-        # Use existing model from store
-        if args.model not in LanguageModelStore:
-            raise ValueError(
-                f"Model '{args.model}' not found in LanguageModelStore. "
-                f"Available models: {list(LanguageModelStore.keys())[:10]}... "
-                f"Or use --custom_endpoint, --custom_api_key, and --custom_model_name for custom APIs."
-            )
-        model = LanguageModelStore[args.model]
-    
+    model = LanguageModelStore[args.model]
     benchmark, format_prompt = build_prompt_benchmark(args)
     
     # Limit problems for generation and evaluation
@@ -167,7 +140,11 @@ def main():
     if args.evaluate and args.eval_limit is not None:
         eval_limit = args.eval_limit
         print(f"Limiting to first {eval_limit} problems (out of {original_benchmark_len} total)")
-        benchmark = benchmark[:eval_limit]
+        rng_state = random.getstate()
+        rng = random.Random(42)
+        indices = sorted(rng.sample(range(len(benchmark)), min(eval_limit, len(benchmark))))
+        benchmark = [benchmark[i] for i in indices]
+        random.setstate(rng_state)
     elif args.debug:
         print(f"Running with {len(benchmark)} instances in debug mode")
         benchmark = benchmark[:15]
