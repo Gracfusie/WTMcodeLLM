@@ -26,8 +26,8 @@ from functools import partial
 from ..base import BaseWatermark, BaseConfig
 from .transform_model import TransformModel
 from utils.transformers_config import TransformersConfig
-from exceptions.exceptions import AlgorithmNameMismatchError
-from visualize.data_for_visualization import DataForVisualization
+# from exceptions.exceptions import AlgorithmNameMismatchError
+# from visualize.data_for_visualization import DataForVisualization
 from utils.utils import create_directory_for_file, load_config_file
 from transformers import LogitsProcessor, LogitsProcessorList, BertTokenizer, BertModel
 
@@ -261,43 +261,43 @@ class SIR(BaseWatermark):
         else:
             return (is_watermarked, z_score)
         
-    def get_data_for_visualization(self, text: str, *args, **kwargs):
-        """Get data for visualization."""
+    # def get_data_for_visualization(self, text: str, *args, **kwargs):
+    #     """Get data for visualization."""
         
-        # Split the text into 2D array of words
-        word_2d = self.utils.get_text_split(text)
-        highlight_values = []
-        decoded_tokens = []
+    #     # Split the text into 2D array of words
+    #     word_2d = self.utils.get_text_split(text)
+    #     highlight_values = []
+    #     decoded_tokens = []
 
-        # Iterate over each sentence in the text
-        for i in range(len(word_2d)):
-            # Construct the context sentence from the previous sentences
-            context_sentence = ' '.join([' '.join(group) for group in word_2d[:i]])
-            # Current sentence for tokenization
-            current_sentence = ' '.join(word_2d[i])
-            # Tokenize the current sentence
-            tokens = self.config.generation_tokenizer.encode(current_sentence, return_tensors="pt", add_special_tokens=False)
+    #     # Iterate over each sentence in the text
+    #     for i in range(len(word_2d)):
+    #         # Construct the context sentence from the previous sentences
+    #         context_sentence = ' '.join([' '.join(group) for group in word_2d[:i]])
+    #         # Current sentence for tokenization
+    #         current_sentence = ' '.join(word_2d[i])
+    #         # Tokenize the current sentence
+    #         tokens = self.config.generation_tokenizer.encode(current_sentence, return_tensors="pt", add_special_tokens=False)
 
-            # Decode each token and append to the decoded_tokens list
-            for token_id in tokens[0]:
-                token = self.config.generation_tokenizer.decode(token_id.item())
-                decoded_tokens.append(token)
+    #         # Decode each token and append to the decoded_tokens list
+    #         for token_id in tokens[0]:
+    #             token = self.config.generation_tokenizer.decode(token_id.item())
+    #             decoded_tokens.append(token)
 
-            # If the context sentence is shorter than required, append highlight -1 for each token
-            if len(context_sentence.split()) < self.config.chunk_length:
-                highlight_values.extend([-1] * len(tokens[0]))
-                continue
+    #         # If the context sentence is shorter than required, append highlight -1 for each token
+    #         if len(context_sentence.split()) < self.config.chunk_length:
+    #             highlight_values.extend([-1] * len(tokens[0]))
+    #             continue
 
-            # Get the embedding of the context sentence and process it through the model
-            context_embedding = self.utils.get_embedding(context_sentence)
-            output = self.utils.transform_model(context_embedding).cpu().detach()[0].numpy()
+    #         # Get the embedding of the context sentence and process it through the model
+    #         context_embedding = self.utils.get_embedding(context_sentence)
+    #         output = self.utils.transform_model(context_embedding).cpu().detach()[0].numpy()
 
-            # Scale the output vector and get similarity values
-            similarity_array = self.utils.scale_vector(output)[self.utils.mapping]
+    #         # Scale the output vector and get similarity values
+    #         similarity_array = self.utils.scale_vector(output)[self.utils.mapping]
 
-            # Append highlight values based on similarity
-            for token_index in tokens[0]:
-                similarity_value = -float(similarity_array[token_index.item()])
-                highlight_values.append(1 if similarity_value > 0 else 0)
+    #         # Append highlight values based on similarity
+    #         for token_index in tokens[0]:
+    #             similarity_value = -float(similarity_array[token_index.item()])
+    #             highlight_values.append(1 if similarity_value > 0 else 0)
 
-        return DataForVisualization(decoded_tokens, highlight_values)
+    #     return DataForVisualization(decoded_tokens, highlight_values)
