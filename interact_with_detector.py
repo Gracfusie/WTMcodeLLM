@@ -31,6 +31,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--api-key", default=os.environ.get("OPENAI_API_KEY", "EMPTY"))
     parser.add_argument("--max-tokens", type=int, default=8*1024)
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default="high")
+    parser.add_argument("--watermark-entropy-threshold", type=float, default=None, help="override watermark_entropy_threshold")
+    parser.add_argument("--watermark-delta", type=float, default=None, help="override watermark_delta")
+    parser.add_argument("--watermark-window-size", type=int, default=None, help="override watermark_proxy_window_size")
     
     parser.add_argument("--enable-watermark-detection", action="store_true", default=True, help="启用水印检测")
     parser.add_argument("--z-threshold", type=float, default=4, help="Z-score 阈值")
@@ -47,9 +50,13 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def chat_once(client, model, messages, max_tokens, reasoning_effort):
+def chat_once(client, model, messages, max_tokens, reasoning_effort, extra_body=None):
     resp = client.chat.completions.create(
-        model=model, messages=messages, max_tokens=max_tokens, reasoning_effort=reasoning_effort
+        model=model,
+        messages=messages,
+        max_tokens=max_tokens,
+        reasoning_effort=reasoning_effort,
+        extra_body=extra_body,
     )
     msg = resp.choices[0].message
     reasoning = getattr(msg, "reasoning_content", None)
@@ -62,6 +69,16 @@ def chat_once(client, model, messages, max_tokens, reasoning_effort):
 def main():
     args = build_parser().parse_args()
     client = OpenAI(base_url=args.endpoint, api_key=args.api_key)
+
+    extra_args = {}
+    if args.watermark_entropy_threshold is not None:
+        extra_args["watermark_entropy_threshold"] = args.watermark_entropy_threshold
+    if args.watermark_delta is not None:
+        extra_args["watermark_delta"] = args.watermark_delta
+    if args.watermark_window_size is not None:
+        extra_args["watermark_proxy_window_size"] = args.watermark_window_size
+    if extra_args:
+        print(f"使用 override 参数: {extra_args}")
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     watermark_detector = None
@@ -79,7 +96,8 @@ def main():
                     model_path = args.proxy_model
 
                 proxy_tokenizer = AutoTokenizer.from_pretrained(model_path)
-                proxy_model = AutoModelForCausalLM.from_pretrained(model_path).to(device).eval()
+                proxy_model = AutoModelForCausalLM.from_pretrained(model_path, 
+            torch_dtype="auto").to(device).eval()
                 
                 core_logic = ProxyLogitsGuidedWatermarker(
                     entropy_threshold=args.entropy_threshold,
@@ -151,7 +169,14 @@ def main():
         
         try:
             messages.append({"role": "user", "content": prompt})
-            answer = chat_once(client, args.model, messages, args.max_tokens, args.reasoning_effort)
+            answer = chat_once(
+                client,
+                args.model,
+                messages,
+                args.max_tokens,
+                args.reasoning_effort,
+                {"vllm_xargs": extra_args} if extra_args else None,
+            )
             messages.append({"role": "assistant", "content": answer})
             print(f"模型：{answer}\n")
 

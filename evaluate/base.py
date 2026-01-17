@@ -108,7 +108,7 @@ class ProxyDetector(BaseDetector):
             pass
 
         self.tokenizer = AutoTokenizer.from_pretrained(model_path)
-        self.proxy_model = AutoModelForCausalLM.from_pretrained(model_path).to(self.device).eval()
+        self.proxy_model = AutoModelForCausalLM.from_pretrained(model_path, torch_dtype="auto").to(self.device).eval()
 
         self.prefix_str = prefix_str or os.environ.get("WATERMARK_PROXY_TEMPLATE_PREFIX", "<|fim_prefix|>")
         self.suffix_str = suffix_str or os.environ.get("WATERMARK_PROXY_TEMPLATE_SUFFIX", "<|fim_suffix|>\n<|fim_middle|>")

@@ -155,18 +155,6 @@ class ProxyWatermarkDetector:
         
         #逐个Token检测
         for i in range(num_tokens):
-            target_token_id = output_tok_ids[i]
-            
-            #Prefix + Context(Windowed) + Suffix
-            current_generated = output_tok_ids[:i]
-            
-            if self.window_size > 0 and len(current_generated) > self.window_size:
-                context_part = current_generated[-self.window_size:]
-            else:
-                context_part = current_generated
-            
-            proxy_in_tok_ids = self.prefix_ids + context_part + self.suffix_ids
-            in_tensor = torch.tensor([proxy_in_tok_ids], device=self.device, dtype=torch.long)
             
             #model forward
             target_token_id = output_tok_ids[i]
