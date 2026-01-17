@@ -36,6 +36,19 @@ try:
 except ImportError:
     SweetLogitsProcessor = None
 
+_MARKLLM_DIR = Path(__file__).resolve().parents[3] / "third_party" / "MarkLLM"
+if str(_MARKLLM_DIR) not in sys.path:
+    sys.path.insert(0, str(_MARKLLM_DIR))
+
+try:
+    # 尝试导入 SIR 相关类（包装器会在实例化时构造真实的 SIRLogitsProcessor）
+    from watermark.sir.sir import SIRConfig, SIRUtils, SIRLogitsProcessor
+    from utils.transformers_config import TransformersConfig as MarkTransformersConfig
+except Exception:
+    SIRConfig = None
+    SIRUtils = None
+    SIRLogitsProcessor = None
+    MarkTransformersConfig = None
 
 class WLLM_VLLMAdapter(HFLogitsProcessorAdapter):
     """vLLM 侧固定参数的 Watermark 适配器（使用 extended_watermark_processor）。
@@ -250,6 +263,57 @@ class WatermarkVLLMAdapter(LogitsProcessor):
 
         elif self.algorithm=="sweet":
             self.impl=Sweet_VLLMAdapter(vllm_config, device, is_pin_memory)
+
+        elif self.algorithm == "sir":
+            if SIRLogitsProcessor is None:
+                raise ImportError("SIR dependencies not found in third_party/MarkLLM. Please place MarkLLM in third_party and try again.")
+
+            # 构造 HF 风格的 wrapper 类，用于在 HFAdapter 中创建 per-request 的 processor
+            class SIR_HF_Wrapper(torch.nn.Module if False else object):
+                """A thin HF-compatible LogitsProcessor wrapper that constructs a SIRLogitsProcessor internally.
+
+                It exposes the HF LogitsProcessor signature: __call__(input_ids, scores) -> scores
+                but is lightweight and built from the HF init kwargs provided by the adapter.
+                """
+
+                def __init__(self, algorithm_config_path: str = None, tokenizer=None, device: str = "cpu", **kwargs):
+                    # tokenzier: a HF-compatible tokenizer provided by vLLM cache
+                    if MarkTransformersConfig is None:
+                        raise ImportError("MarkLLM TransformersConfig not available")
+
+                    # Build a TransformersConfig expected by SIR's BaseConfig
+                    tf_cfg = MarkTransformersConfig(model=None, tokenizer=tokenizer, vocab_size=len(tokenizer.get_vocab()), device=device)
+
+                    # Instantiate SIRConfig using provided algorithm_config_path (may be None -> default inside)
+                    self.config = SIRConfig(algorithm_config_path, tf_cfg)
+                    # Build utils (this will load the BERT embedding and transform model as configured)
+                    self.utils = SIRUtils(self.config)
+                    # Inner HF-like logits processor
+                    self.inner = SIRLogitsProcessor(self.config, self.utils)
+
+                def __call__(self, input_ids=None, scores=None):
+                    # Delegate to the real SIRLogitsProcessor
+                    return self.inner(input_ids=input_ids, scores=scores)
+
+            # 从 vLLM tokenizer 构造 hf_init_kwargs
+            tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
+            if tokenizer is None:
+                raise RuntimeError("SIR VLLM adapter requires tokenizer from vLLM cache.")
+
+            sir_config_path = os.environ.get("WATERMARK_SIR_CONFIG", "config/SIR.json")
+            self.impl = HFLogitsProcessorAdapter(
+                vllm_config=vllm_config,
+                device=device,
+                is_pin_memory=is_pin_memory,
+                hf_processor_cls=SIR_HF_Wrapper,
+                hf_init_kwargs={
+                    "algorithm_config_path": sir_config_path,
+                    "tokenizer": tokenizer,
+                    "device": str(device),
+                },
+                argmax_invariant=False,
+                extra_kwargs_from_params=None,
+            )
         else:
             raise ValueError(f"Unknown watermark algorithm: {self.algorithm}")
 
