@@ -1,3 +1,4 @@
+from __future__ import annotations
 import os
 import time
 import torch
@@ -13,8 +14,6 @@ from logits_processors.utils.proxy_model import ProxyModelManager
 from logits_processors.utils.watermark import ProxyLogitsGuidedWatermarker
 from config import EnvConfig
 
-from __future__ import annotations
-
 import sys
 from pathlib import Path
 
@@ -27,6 +26,16 @@ from third_party.WLLM.extended_watermark_processor import WatermarkLogitsProcess
 from logits_processors.vllm_adapters.hf_logits_processor_adapter_initial import (
     HFLogitsProcessorAdapter,
 )
+
+_CODE_WATERMARK_DIR = Path(__file__).resolve().parents[3] / "third_party" / "code_watermark"
+if str(_CODE_WATERMARK_DIR) not in sys.path:
+    sys.path.insert(0, str(_CODE_WATERMARK_DIR))
+
+try:
+    from models.sweet import SweetLogitsProcessor
+except ImportError:
+    SweetLogitsProcessor = None
+
 
 class WLLM_VLLMAdapter(HFLogitsProcessorAdapter):
     """vLLM 侧固定参数的 Watermark 适配器（使用 extended_watermark_processor）。
@@ -53,8 +62,8 @@ class WLLM_VLLMAdapter(HFLogitsProcessorAdapter):
             hf_processor_cls=WatermarkLogitsProcessor,
             hf_init_kwargs={
                 "vocab": list(tokenizer.get_vocab().values()),
-                "gamma": 0.25,
-                "delta": 2.0,
+                "gamma": os.environ.get("WATERMARK_GAMMA"),
+                "delta": os.environ.get("WATERMARK_DELTA"),
                 "seeding_scheme": "selfhash",
             },
             argmax_invariant=False,
@@ -186,6 +195,48 @@ class Proxy_VLLMAdapter(LogitsProcessor):
 
         return logits
 
+class Sweet_VLLMAdapter(HFLogitsProcessorAdapter):
+    """
+    SWEET 适配器
+    """
+    def __init__(
+        self,
+        vllm_config: VllmConfig,
+        device: torch.device,
+        is_pin_memory: bool,
+    ) -> None:
+        if SweetLogitsProcessor is None:
+             raise ImportError("SWEET dependencies not found.")
+
+        tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
+        
+        entropy_threshold = float(os.environ.get("WATERMARK_ENTROPY_THRESHOLD", 1.5))
+        gamma = float(os.environ.get("WATERMARK_GAMMA", 0.5))
+        delta = float(os.environ.get("WATERMARK_DELTA", 2.0))
+        secret_key = int(os.environ.get("WATERMARK_SECRET_KEY", 42))
+
+        super().__init__(
+            vllm_config=vllm_config,
+            device=device,
+            is_pin_memory=is_pin_memory,
+            hf_processor_cls=SweetLogitsProcessor,
+            hf_init_kwargs={
+                "vocab": list(tokenizer.get_vocab().values()),
+                "gamma": gamma,
+                "delta": delta,
+                "entropy_threshold": entropy_threshold,
+                "hash_key": secret_key,                
+                "seeding_scheme": "selfhash"           
+            },
+            argmax_invariant=False,
+            extra_kwargs_from_params=None,
+        )
+
+    @classmethod
+    def validate_params(cls, sampling_params: SamplingParams):
+        return None
+
+
 class WatermarkVLLMAdapter(LogitsProcessor):
     def __init__(self, vllm_config: VllmConfig, device: torch.device, is_pin_memory: bool):
         self.algorithm = os.environ.get("WATERMARK_ALGORITHM", "proxy").lower()
@@ -195,6 +246,9 @@ class WatermarkVLLMAdapter(LogitsProcessor):
             
         elif self.algorithm == "wllm":
             self.impl = WLLM_VLLMAdapter(vllm_config, device, is_pin_memory)
+
+        elif self.algorithm="sweet":
+            self.impl=Sweet_VLLMAdapter(vllm_config, device, is_pin_memory)
         else:
             raise ValueError(f"Unknown watermark algorithm: {self.algorithm}")
 
