@@ -33,7 +33,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default="high")
     
     parser.add_argument("--enable-watermark-detection", action="store_true", default=True, help="启用水印检测")
-    parser.add_argument("--z-threshold", type=float, default=, help="Z-score 阈值")
+    parser.add_argument("--z-threshold", type=float, default=4, help="Z-score 阈值")
     parser.add_argument(
         "--detection-method", 
         choices=["wllm", "proxy"], 
@@ -120,8 +120,8 @@ def main():
                 
                 watermark_detector = WLLMWatermarkDetector(
                     vocab=list(tokenizer.get_vocab().values()),
-                    gamma=0.25
-                    delta=2.0,
+                    gamma=float(os.environ.get("WATERMARK_GAMMA", 0.5)),
+                    delta=float(os.environ.get("WATERMARK_DELTA", 2)),
                     seeding_scheme="selfhash",
                     device=device,
                     tokenizer=tokenizer,

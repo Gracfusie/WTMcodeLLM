@@ -54,7 +54,8 @@ class WLLM_VLLMAdapter(HFLogitsProcessorAdapter):
         tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
         if tokenizer is None:
             raise RuntimeError("WatermarkVLLMAdapter requires tokenizer from vLLM cache.")
-
+        gamma_val = float(os.environ.get("WATERMARK_GAMMA", 0.25))
+        delta_val = float(os.environ.get("WATERMARK_DELTA", 2.0))
         super().__init__(
             vllm_config=vllm_config,
             device=device,
@@ -62,8 +63,8 @@ class WLLM_VLLMAdapter(HFLogitsProcessorAdapter):
             hf_processor_cls=WatermarkLogitsProcessor,
             hf_init_kwargs={
                 "vocab": list(tokenizer.get_vocab().values()),
-                "gamma": os.environ.get("WATERMARK_GAMMA"),
-                "delta": os.environ.get("WATERMARK_DELTA"),
+                "gamma": gamma_val,
+                "delta": delta_val,
                 "seeding_scheme": "selfhash",
             },
             argmax_invariant=False,
