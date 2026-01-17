@@ -87,7 +87,6 @@ def get_common_tokens(tokenizer1, tokenizer2):
 
 @dataclass
 class RequestState:
-    kv_cache: Tuple[Tuple[torch.Tensor, torch.Tensor], ...]
     prompt_tok_ids: List[int]
     output_tok_ids: List[int]
     next_tok_logits: torch.Tensor = None
@@ -154,7 +153,6 @@ class ProxyModelManager:
                     print ("加回一个曾经处理过的 request")
                 else:
                     request_state = RequestState(
-                        kv_cache=None,
                         prompt_tok_ids=prompt_tok_ids,
                         output_tok_ids=output_tok_ids,
                         entropy_threshold=overrides.get('watermark_entropy_threshold') if overrides else None,
@@ -192,42 +190,46 @@ class ProxyModelManager:
         # sanity_check idx 连续
         assert sorted(self.req_info_by_idx.keys()) == list(range(len(self.req_info_by_idx))), "idx 不连续"
 
-        # 在这里进行无 batching 的 inference
-        # 虽然很蠢但是如果不这么做就得改 vllm engine 了
-        
-        with torch.inference_mode():
-            for req_state in self.req_info_by_idx.values():
-
-                window_size = req_state.window_size if req_state.window_size is not None else EnvConfig.window_size
-                if window_size > 0:
-                    proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids[-window_size:] + self.suffix_tok_ids
-                else:
-                    proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids + self.suffix_tok_ids
-
-                in_long_tensor = torch.tensor(proxy_in_tok_ids, device=self.device, dtype=torch.long).unsqueeze(0) # TODO
-
-                if req_state.kv_cache is not None:
-                    # 暂未实现
-                    import pudb.remote; pudb.remote.set_trace()
-                    # sanity check: 只应该比上次多两个 token
-                    # assert len(proxy_in_tok_ids) == cached_tokens + 2
-
-                if req_state.kv_cache is None:
-                    outputs = self.proxy_model(
-                        input_ids=in_long_tensor,
-                        return_dict=True
-                    )
-                else:
-                    # 暂时不实现 kv cache
-                    assert (False)
-                    assert (EnvConfig.window_size == -1), "window_size 不为 -1 时无法实现 kv cache"
-                    # outputs = self.proxy_model(
-                    #     input_ids=in_long_tensor,
-                    #     past_key_values=req_state.kv_cache,
-                    #     # position_ids
-                    #     use_cache=True,
-                    #     return_dict=True
-                    # )
+        if self.req_info_by_idx:
+            with torch.inference_mode():
+                all_sequences = []
+                req_states_list = list(self.req_info_by_idx.values())
                 
-                req_state.next_tok_logits = outputs.logits[0, -1, :].clone()
-
+                for req_state in req_states_list:
+                    window_size = req_state.window_size if req_state.window_size is not None else EnvConfig.window_size
+                    if window_size > 0:
+                        proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids[-window_size:] + self.suffix_tok_ids
+                    else:
+                        proxy_in_tok_ids = self.prefix_tok_ids + req_state.output_tok_ids + self.suffix_tok_ids
+                    all_sequences.append(proxy_in_tok_ids)
+                
+                max_len = max(len(seq) for seq in all_sequences)
+                pad_token_id = self.proxy_tokenizer.pad_token_id
+                
+                padded_sequences = []
+                attention_masks = []
+                actual_lengths = []
+                
+                for seq in all_sequences:
+                    actual_len = len(seq)
+                    actual_lengths.append(actual_len)
+                    
+                    padding_len = max_len - actual_len
+                    padded_seq = seq + [pad_token_id] * padding_len
+                    mask = [1] * actual_len + [0] * padding_len
+                    
+                    padded_sequences.append(padded_seq)
+                    attention_masks.append(mask)
+                
+                input_ids = torch.tensor(padded_sequences, device=self.device, dtype=torch.long)
+                attention_mask = torch.tensor(attention_masks, device=self.device, dtype=torch.long)
+                
+                outputs = self.proxy_model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    return_dict=True
+                )
+                
+                for i, req_state in enumerate(req_states_list):
+                    last_valid_idx = actual_lengths[i] - 1
+                    req_state.next_tok_logits = outputs.logits[i, last_valid_idx, :].clone()

@@ -3,7 +3,6 @@ import torch.nn.functional as F
 import hashlib
 import math
 from transformers import AutoTokenizer, AutoModelForCausalLM
-from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class ProxyLogitsGuidedWatermarker:
     """
@@ -16,21 +15,32 @@ class ProxyLogitsGuidedWatermarker:
         self.vocab_size = vocab_size
         self.secret_key = secret_key 
 
-    def _compute_entropy(self, logits: torch.Tensor) -> float:
+    def _compute_entropy(self, logits: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            logits: [B, V]
+        Returns:
+            entropy: [B]
+        """
         probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
         entropy = -torch.sum(probs * log_probs, dim=-1)
-        return entropy.item()
+        return entropy
 
-    def _get_green_list_mask(self, proxy_logits: torch.Tensor, last_token_id: int) -> torch.Tensor:
-        sorted_indices = torch.argsort(proxy_logits, descending=True, dim=-1)
-        
-        vocab_size = proxy_logits.size(-1)
+    def _get_green_list_mask(self, proxy_logits: torch.Tensor, last_token_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            proxy_logits: [B, V]
+            last_token_ids: [B]
+        Returns:
+            green_mask: [B, V]
+        """
+        B, vocab_size = proxy_logits.shape
         device = proxy_logits.device
         
-        green_mask = torch.zeros_like(proxy_logits, dtype=torch.bool)
+        sorted_indices = torch.argsort(proxy_logits, descending=True, dim=-1)  # [B, V]
+        green_mask = torch.zeros(B, vocab_size, dtype=torch.bool, device=device)
         
-        # 将无符号的 64位 hex 转为 有符号的 int64
         def to_signed(val):
             if val >= (1 << 63):
                 val -= (1 << 64)
@@ -41,62 +51,77 @@ class ProxyLogitsGuidedWatermarker:
         MIX_CONST_1 = torch.tensor(to_signed(0xbf58476d1ce4e5b9), dtype=torch.int64, device=device)
         MIX_CONST_2 = torch.tensor(to_signed(0x94d049bb133111eb), dtype=torch.int64, device=device)
 
-        t_last = torch.tensor(last_token_id, dtype=torch.int64, device=device)
+        t_last = last_token_ids.to(dtype=torch.int64, device=device)  # [B]
         t_key = torch.tensor(to_signed(int(self.secret_key)), dtype=torch.int64, device=device)
 
         even_vocab_size = vocab_size - (vocab_size % 2)
         
         if even_vocab_size > 0:
-            step_indices = torch.arange(0, even_vocab_size, 2, device=device, dtype=torch.int64)
+            num_pairs = even_vocab_size // 2
+            step_indices = torch.arange(0, even_vocab_size, 2, device=device, dtype=torch.int64)  # [P]
             
-            h = step_indices + (t_last * SEED_CONST) + (t_key * KEY_CONST)
+            # [B, P] = [1, P] + [B, 1] * scalar + scalar
+            h = step_indices.unsqueeze(0) + (t_last.unsqueeze(1) * SEED_CONST) + (t_key * KEY_CONST)
             
             h = (h ^ (h >> 30)) * MIX_CONST_1
             h = (h ^ (h >> 27)) * MIX_CONST_2
             h = h ^ (h >> 31)
             
-            bits = (h & 1) 
+            bits = (h & 1)
+            select_col = (1 - bits).long().unsqueeze(-1)  # [B, P, 1]
+            
+            pairs = sorted_indices[:, :even_vocab_size].view(B, num_pairs, 2)  # [B, P, 2]
+            green_tokens = torch.gather(pairs, 2, select_col).squeeze(-1)  # [B, P]
+            
+            green_mask.scatter_(1, green_tokens, True)
 
-            select_col = (1 - bits).long().unsqueeze(1)
-            pairs = sorted_indices[0, :even_vocab_size].view(-1, 2)
-            green_tokens = torch.gather(pairs, 1, select_col).squeeze(1)
-            green_mask[0].scatter_(0, green_tokens, True)
-
-        # Corner case
         if vocab_size % 2 != 0:
-            last_token_idx = sorted_indices[0, -1]
+            last_token_idx = sorted_indices[:, -1]  # [B]
             t_vocab = torch.tensor(vocab_size, dtype=torch.int64, device=device)
             
-            h_last = t_vocab + (t_last * SEED_CONST) + (t_key * KEY_CONST)
+            h_last = t_vocab + (t_last * SEED_CONST) + (t_key * KEY_CONST)  # [B]
             
             h_last = (h_last ^ (h_last >> 30)) * MIX_CONST_1
             h_last = (h_last ^ (h_last >> 27)) * MIX_CONST_2
             h_last = h_last ^ (h_last >> 31)
             
-            if (h_last & 1) == 1:
-                green_mask[0, last_token_idx] = True
+            last_is_green = ((h_last & 1) == 1)  # [B]
+            batch_indices = torch.arange(B, device=device)[last_is_green]
+            if batch_indices.numel() > 0:
+                green_mask[batch_indices, last_token_idx[last_is_green]] = True
 
         return green_mask
 
-    def process_logits(self, last_token_id: int, main_logits: torch.Tensor, proxy_logits: torch.Tensor, entropy_threshold=None, delta=None):
+    def process_logits(self, last_token_ids: torch.Tensor, main_logits: torch.Tensor, proxy_logits: torch.Tensor, entropy_threshold=None, delta=None):
+        """
+        Args:
+            last_token_ids: [B]
+            main_logits: [B, V]
+            proxy_logits: [B, V]
+        Returns:
+            watermarked_logits: [B, V]
+            watermarked_mask: [B] bool tensor
+        """
         _entropy_threshold = entropy_threshold if entropy_threshold is not None else self.entropy_threshold
         _delta = delta if delta is not None else self.delta
         
-        entropy = self._compute_entropy(proxy_logits)
-    
-        if entropy < _entropy_threshold:
-            return main_logits, False #跳过水印when entropy is low
-        #Split
-        green_mask = self._get_green_list_mask(proxy_logits, last_token_id)
+        entropy = self._compute_entropy(proxy_logits)  # [B]
+        should_watermark = entropy >= _entropy_threshold  # [B]
+        
+        green_mask = self._get_green_list_mask(proxy_logits, last_token_ids)  # [B, V]
+        
         if green_mask.shape[-1] < main_logits.shape[-1]:
-            # pad 0。尽量不去鼓励非公共 tok
-            green_mask = torch.nn.functional.pad(green_mask, (0, main_logits.shape[-1] - green_mask.shape[-1]))
+            green_mask = F.pad(green_mask, (0, main_logits.shape[-1] - green_mask.shape[-1]))
         
-        #Insert Bias
-        watermarked_logits = main_logits.clone()
-        watermarked_logits[green_mask] += _delta
+        effective_mask = green_mask & should_watermark.unsqueeze(-1)  # [B, V]
         
-        return watermarked_logits, True
+        watermarked_logits = torch.where(
+            effective_mask, 
+            main_logits + _delta, 
+            main_logits
+        )
+        
+        return watermarked_logits, should_watermark
 
 class ProxyWatermarkDetector:
     def __init__(self, watermarker, proxy_model, tokenizer, device, 

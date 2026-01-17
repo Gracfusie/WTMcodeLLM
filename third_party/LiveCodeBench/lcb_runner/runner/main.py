@@ -139,7 +139,7 @@ def main():
     original_benchmark_len = len(benchmark)
     if args.evaluate and args.eval_limit is not None:
         eval_limit = args.eval_limit
-        print(f"Limiting to first {eval_limit} problems (out of {original_benchmark_len} total)")
+        print(f"Limiting to {eval_limit} problems (out of {original_benchmark_len} total)")
         rng_state = random.getstate()
         rng = random.Random(42)
         indices = sorted(rng.sample(range(len(benchmark)), min(eval_limit, len(benchmark))))

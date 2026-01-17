@@ -92,6 +92,7 @@ class WLLM_VLLMAdapter(HFLogitsProcessorAdapter):
 
 class Proxy_VLLMAdapter(LogitsProcessor):
     """将 HuggingFace 的 LogitsProcessor 适配为 vLLM 批处理接口。支持 Batch Update。"""
+    MAX_BATCH = 16384
 
     def __init__(self, vllm_config: "VllmConfig", device: torch.device,
                 is_pin_memory: bool):
@@ -105,6 +106,11 @@ class Proxy_VLLMAdapter(LogitsProcessor):
             secret_key=EnvConfig.watermark_secret_key
         )
         self.debug_enabled = os.environ.get('WATERMARK_DEBUG', '0') == '1'
+        self.is_pin_memory = is_pin_memory
+        self.last_token_ids_buffer = torch.zeros(
+            self.MAX_BATCH, dtype=torch.long, pin_memory=is_pin_memory,
+            device="cpu"
+        )
 
     @classmethod
     def validate_params(cls, params: SamplingParams):
@@ -173,35 +179,72 @@ class Proxy_VLLMAdapter(LogitsProcessor):
         # sanity check
         assert len(logits) == len(self.proxy_model_manager.req_info_by_idx), "logits 和 request 数量不一致"
 
-        for i in range(len(logits)):
-            req_state = self.proxy_model_manager.req_info_by_idx[i]
-
-            if req_state.output_tok_ids:
-                last_token_id = req_state.output_tok_ids[-1]
-            else:
-                last_token_id = 0
-
-            main_logits_unsqueezed = logits[i].unsqueeze(0)
-            proxy_logits_unsqueezed = req_state.next_tok_logits.unsqueeze(0)
-            
-            new_logits, applied = self.watermarker.process_logits(
-                last_token_id=last_token_id,
-                main_logits=main_logits_unsqueezed,
-                proxy_logits=proxy_logits_unsqueezed,
-                entropy_threshold=req_state.entropy_threshold,
-                delta=req_state.delta,
+        B = len(logits)
+        for i in range(B):
+            req = self.proxy_model_manager.req_info_by_idx[i]
+            self.last_token_ids_buffer[i] = (
+                req.output_tok_ids[-1] if req.output_tok_ids else 0
             )
-            
-            if applied:
+        last_token_ids = self.last_token_ids_buffer[:B].to(logits.device, non_blocking=True)
+
+        proxy_logits = torch.stack(
+            [self.proxy_model_manager.req_info_by_idx[i].next_tok_logits for i in range(B)], dim=0
+        )
+        entropy_thresholds = [self.proxy_model_manager.req_info_by_idx[i].entropy_threshold for i in range(B)]
+        deltas = [self.proxy_model_manager.req_info_by_idx[i].delta for i in range(B)]
+        
+        # 输出具体 token 选择的时候才用这个
+        # if self.debug_enabled:
+        #     main_logits_before = logits.clone()
+
+        if len(set(entropy_thresholds)) == 1 and len(set(deltas)) == 1:
+            # Batched
+            logits, applied_mask = self.watermarker.process_logits(
+                last_token_ids=last_token_ids,
+                main_logits=logits,
+                proxy_logits=proxy_logits,
+                entropy_threshold=entropy_thresholds[0],
+                delta=deltas[0],
+            )
+        else:
+            print(
+                f"Cannot batch watermark: entropy_thresholds={set(entropy_thresholds)}, deltas={set(deltas)}"
+            )
+            applied_mask = torch.zeros(B, dtype=torch.bool, device=logits.device)
+            for i in range(B):
+                new_logits_i, applied_i = self.watermarker.process_logits(
+                    last_token_ids=last_token_ids[i:i+1],
+                    main_logits=logits[i:i+1],
+                    proxy_logits=proxy_logits[i:i+1],
+                    entropy_threshold=entropy_thresholds[i],
+                    delta=deltas[i],
+                )
+                logits[i] = new_logits_i.squeeze(0)
+                applied_mask[i] = applied_i[0]
+        
+        # 输出具体 token 选择。很慢
+        # if self.debug_enabled:
+        #     for i in range(B):
+        #         req_state = self.proxy_model_manager.req_info_by_idx[i]
+        #         input_ids = torch.tensor(
+        #             req_state.prompt_tok_ids + req_state.output_tok_ids,
+        #             device=logits.device, dtype=torch.long
+        #         ).unsqueeze(0)
+        #         self._debug_output(
+        #             input_ids,
+        #             main_logits_before[i:i+1],
+        #             proxy_logits[i:i+1],
+        #             logits[i:i+1],
+        #             applied_mask[i].item(),
+        #         )
+
+        applied_mask = applied_mask.cpu().numpy()
+        for i in range(B):
+            req_state = self.proxy_model_manager.req_info_by_idx[i]
+            if applied_mask[i]:
                 req_state.watermarked_count += 1
             else:
                 req_state.non_watermarked_count += 1
-            
-            if self.debug_enabled:
-                input_ids = torch.tensor(req_state.prompt_tok_ids + req_state.output_tok_ids, device=logits.device, dtype=torch.long).unsqueeze(0)
-                self._debug_output(input_ids, main_logits_unsqueezed, proxy_logits_unsqueezed, new_logits, applied)
-            
-            logits[i] = new_logits.squeeze(0)
 
         if self.debug_enabled:
             elapsed = time.perf_counter() - start_time
