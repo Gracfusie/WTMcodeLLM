@@ -101,8 +101,6 @@ class ProxyLogitsGuidedWatermarker:
 class ProxyWatermarkDetector:
     def __init__(self, watermarker, proxy_model, tokenizer, device, 
                  prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
-    def __init__(self, watermarker, proxy_model, tokenizer, device, 
-                 prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
         self.watermarker = watermarker
         self.proxy_model = proxy_model
         self.tokenizer = tokenizer #proxy model的tokenizer
