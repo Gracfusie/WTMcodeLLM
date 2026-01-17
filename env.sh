@@ -1,4 +1,7 @@
-source /etc/network_turbo
+# 如果没有设置 proxy 环境变量，才调用 network_turbo
+if [ -z "$http_proxy" ] && [ -z "$https_proxy" ] && [ -z "$HTTP_PROXY" ] && [ -z "$HTTPS_PROXY" ]; then
+    source /etc/network_turbo
+fi
 source .venv/bin/activate
 
 # 确保权重和缓存都落在大盘

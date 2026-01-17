@@ -1,5 +1,7 @@
 import os
 from time import sleep
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 try:
     import openai
@@ -11,6 +13,11 @@ from lcb_runner.lm_styles import LMStyle
 from lcb_runner.runner.base_runner import BaseRunner
 
 
+def _openai_support_n() -> bool:
+    val = os.environ.get("OPENAI_SUPPORT_N", "1")
+    return val.lower() not in ("false", "0", "no", "off")
+
+
 class OpenAIRunner(BaseRunner):
     client = OpenAI(
         api_key=os.getenv("OPENAI_KEY"),
@@ -18,6 +25,7 @@ class OpenAIRunner(BaseRunner):
 
     def __init__(self, args, model):
         super().__init__(args, model)
+        self.n = args.n
         if model.model_style == LMStyle.OpenAIReasonPreview:
             self.client_kwargs: dict[str | str] = {
                 "model": args.model,
@@ -40,15 +48,28 @@ class OpenAIRunner(BaseRunner):
                 "top_p": args.top_p,
                 "frequency_penalty": 0,
                 "presence_penalty": 0,
-                "n": args.n,
+                "n": args.n if _openai_support_n() else 1,
                 "timeout": args.openai_timeout,
                 # "stop": args.stop, --> stop is only used for base models currently
             }
+            if os.environ.get("OPENAI_EXTRA_BODY"):
+                self.client_kwargs["extra_body"] = json.loads(os.environ.get("OPENAI_EXTRA_BODY"))
 
-    def _run_single(self, prompt: list[dict[str, str]], n: int = 10) -> list[str]:
+    def _run_single(self, prompt: list[dict[str, str]], retry: int = 10) -> list[str]:
+        if _openai_support_n():
+            return self._run_single_with_n(prompt, retry)
+        
+        results = []
+        with ThreadPoolExecutor(max_workers=self.n) as executor:
+            futures = [executor.submit(self._run_single_with_n, prompt, retry) for _ in range(self.n)]
+            for future in as_completed(futures):
+                results.extend(future.result())
+        return results
+
+    def _run_single_with_n(self, prompt: list[dict[str, str]], retry: int = 10) -> list[str]:
         assert isinstance(prompt, list)
 
-        if n == 0:
+        if retry == 0:
             print("Max retries reached. Returning empty response.")
             return []
 
@@ -71,7 +92,7 @@ class OpenAIRunner(BaseRunner):
             print("Sleeping for 30 seconds...")
             print("Consider reducing the number of parallel processes.")
             sleep(30)
-            return self._run_single(prompt, n=n - 1)
+            return self._run_single_with_n(prompt, retry=retry - 1)
         except Exception as e:
             print(f"Failed to run the model for {prompt}!")
             print("Exception: ", repr(e))

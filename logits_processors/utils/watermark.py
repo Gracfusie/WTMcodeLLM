@@ -200,7 +200,7 @@ class ProxyWatermarkDetector:
                 total_scored += 1
                 
                 # 计算红绿名单 mask，形状为 (1, vocab_size)
-                green_mask = self.watermarker._get_green_list_mask(next_tok_logits, last_token_id)
+                green_mask = self.watermarker._get_green_list_mask(next_tok_logits, torch.tensor([last_token_id], device=self.device, dtype=torch.long))
                 
                 # 判定是否命中
                 if target_token_id < green_mask.size(1):
