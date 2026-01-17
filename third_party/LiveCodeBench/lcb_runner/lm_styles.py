@@ -861,6 +861,22 @@ LanguageModelList: list[LanguageModel] = [
         datetime(2024, 4, 1),
         "https://huggingface.co/agentica-org/DeepCoder-14B-Preview",
     ),
+    ## qwen3-nvfp4
+    LanguageModel(
+        "qwen3coder-nvfp4",
+        "Qwen3-Coder-30B-A3B-Instruct-FP4",
+        LMStyle.OpenAIChat,
+        datetime(2025, 7, 31),
+        link="",
+    ),
+    ## qwen3-nvfp4
+    LanguageModel(
+        "qwen3coder-openrouter",
+        "qwen/qwen3-coder-30b-a3b-instruct",
+        LMStyle.OpenAIChat,
+        datetime(2025, 7, 31),
+        link="",
+    ),
 ]
 
 LanguageModelStore: dict[str, LanguageModel] = {
