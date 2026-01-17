@@ -1,0 +1,6 @@
+Design a minimal Flask REST API with endpoints:
+- POST /items to create an item {name}
+- GET /items to list items
+- GET /items/<id> to fetch by id
+- Validation and error handling
+Provide a short README and curl examples.

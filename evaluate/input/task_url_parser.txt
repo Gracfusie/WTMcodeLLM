@@ -1,0 +1,5 @@
+Write a small CLI tool in Python that parses a URL and prints:
+- scheme, host, port, path, query params
+- handle missing components gracefully
+- support `--json` flag for machine-readable output
+Include `argparse` usage examples.
