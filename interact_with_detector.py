@@ -205,12 +205,33 @@ def main():
                     
                     n_green = score_dict.get('num_green_tokens', 'N/A')
                     n_total = score_dict.get('num_tokens_scored', 'N/A')
+                    total_tokens = None
+                    if hasattr(watermark_detector, "tokenizer"):
+                        try:
+                            total_tokens = len(
+                                watermark_detector.tokenizer(
+                                    text_to_detect, add_special_tokens=False
+                                ).input_ids
+                            )
+                        except Exception:
+                            total_tokens = None
                     z_score = score_dict.get('z_score', 0.0)
                     p_value = score_dict.get('p_value', 'N/A')
                     green_frac = score_dict.get('green_fraction', 'N/A')
                     prediction = score_dict.get('prediction', False)
 
-                    print(f"  - 绿/总 Token: {n_green} / {n_total}")
+                    if detector_type == "Proxy":
+                        if total_tokens is not None:
+                            print(f"  - 熵达标/总 Token: {n_total} / {total_tokens}")
+                        else:
+                            print(f"  - 熵达标 Token: {n_total}")
+                        print(f"  - 绿/达标 Token: {n_green} / {n_total}")
+                    else:
+                        if total_tokens is not None:
+                            print(f"  - 统计/总 Token: {n_total} / {total_tokens}")
+                        else:
+                            print(f"  - 统计 Token: {n_total}")
+                        print(f"  - 绿/统计 Token: {n_green} / {n_total}")
                     if isinstance(green_frac, float):
                         print(f"  - 绿名单比例 : {green_frac:.3f}")
                     print(f"  - Z-Score    : {z_score:.3f}")
