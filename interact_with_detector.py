@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 import argparse
 import os
 import sys
@@ -7,6 +6,7 @@ import torch
 from openai import OpenAI
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
+# --- 路径配置 ---
 _WLLM_DIR = Path(__file__).parent / "third_party" / "WLLM"
 if str(_WLLM_DIR) not in sys.path:
     sys.path.insert(0, str(_WLLM_DIR))
@@ -23,6 +23,21 @@ try:
 except ImportError:
     print(f"[Warning] 在 {_ACW_DIR} 下未找到 watermark.py 模块，Proxy 模式不可用。")
 
+try:
+    from logits_processors.utils.sweet_detector import SweetDetector
+    print("[Init] 成功加载自定义 SweetDetector")
+except ImportError as e:
+    print(f"[Error] 无法加载 SweetDetector: {e}")
+    SweetDetector = None
+
+# gold prompts
+SWEET_BENCHMARK_PROMPTS = {
+    "solution": 'def solution(*args):\n    """\n    Generate a solution\n    """\n',
+    "solution_file": '# Here is the correct implementation of the code exercise\ndef solution(*args):\n',
+    "function": 'def function(*args, **kargs):\n    """\n    Generate a code given the condition\n    """\n',
+    "my_solution": 'from typing import List\n\ndef my_solution(*args, **kargs):\n    """\n    Generate a solution\n    """\n',
+    "foo": 'def foo(*args):\n    """\n    Solution that solves a problem\n    """\n'
+}
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="vLLM Chat CLI")
@@ -39,13 +54,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--z-threshold", type=float, default=4, help="Z-score 阈值")
     parser.add_argument(
         "--detection-method", 
-        choices=["wllm", "proxy"], 
+        choices=["wllm", "proxy", "sweet"], 
         default=os.environ.get("WATERMARK_ALGORITHM"),
-        help="选择检测算法: 'wllm'或 'proxy'"
+        help="选择检测算法: 'wllm', 'proxy' 或 'sweet'"
     )
     parser.add_argument("--proxy-model", default=os.environ.get("WATERMARK_PROXY_MODEL"), help="[Proxy模式] Proxy 模型路径")
-    parser.add_argument("--entropy-threshold", type=float, default=os.environ.get("WATERMARK_ENTROPY_THRESHOLD"), help="[Proxy模式] 熵阈值")
-    parser.add_argument("--secret-key", type=int, default=os.environ.get("WATERMARK_SECRET_KEY"), help="[Proxy模式] 密钥")
+    parser.add_argument("--entropy-threshold", type=float, default=os.environ.get("WATERMARK_ENTROPY_THRESHOLD"), help="[Proxy模式/SWEET] 熵阈值")
+    parser.add_argument("--secret-key", type=int, default=os.environ.get("WATERMARK_SECRET_KEY"), help="[Proxy模式/SWEET] 密钥")
 
     return parser
 
@@ -83,6 +98,10 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     watermark_detector = None
     detector_type = "None"
+
+    # SWEET params
+    model_for_entropy = None 
+    tokenizer_for_entropy = None
 
     if args.enable_watermark_detection:
         if args.detection_method == "proxy":
@@ -151,6 +170,48 @@ def main():
                 print("[Init] WLLM 检测器就绪。")
             except Exception as e:
                 print(f"[Error] WLLM 检测器初始化失败: {e}")
+        
+        # SWEET
+        elif args.detection_method == "sweet":
+            print(f"[Init] 初始化 SWEET 检测器 (含模型重计算)...")
+            if SweetDetector is None:
+                print("[Error] SweetDetector 类未导入，请检查 logits_processors/utils/sweet_detector.py 是否存在。")
+            else:
+                try:
+                    # 1. 加载主模型 (用于计算 Entropy)
+                    model_name = args.model or "Qwen/Qwen2.5-Coder-1.5B-Instruct"
+                    print(f"       Loading Main Model for Entropy: {model_name}")
+                    
+                    try:
+                        from modelscope import snapshot_download
+                        model_path = snapshot_download(model_name)
+                    except ImportError:
+                        model_path = model_name
+
+                    tokenizer_for_entropy = AutoTokenizer.from_pretrained(model_path)
+                    model_for_entropy = AutoModelForCausalLM.from_pretrained(
+                        model_path, 
+                        device_map=device, 
+                        torch_dtype="auto"
+                    ).eval()
+                    gamma = float(os.environ.get("WATERMARK_GAMMA", 0.5))
+
+                    # 2. 初始化 SweetDetector
+                    vocab_size = len(tokenizer_for_entropy.get_vocab())
+                    watermark_detector = SweetDetector(
+                        entropy_threshold=args.entropy_threshold,
+                        hash_key=args.secret_key,  
+                        vocab_size=vocab_size,
+                        gamma=gamma,
+                        z_threshold=args.z_threshold,
+                        tokenizer=tokenizer_for_entropy 
+                    )
+                    detector_type = "SWEET"
+                    print("[Init] SWEET 检测器就绪。")
+                except Exception as e:
+                    import traceback
+                    traceback.print_exc()
+                    print(f"[Error] SWEET 检测器初始化失败: {e}")
 
     messages = []
     system_prompt = os.environ.get("SYSTEM_PROMPT")
@@ -188,6 +249,8 @@ def main():
                 print(f">>>正在使用 [{detector_type}] 模式检测...")
                 try:
                     score_dict = {}
+                    
+                    # --- 分支 A: WLLM ---
                     if detector_type == "WLLM":
                         score_dict = watermark_detector.detect(
                             text=text_to_detect,
@@ -195,10 +258,27 @@ def main():
                             return_scores=True,
                             z_threshold=args.z_threshold
                         )
+                        
+                    # --- 分支 B: Proxy ---
                     elif detector_type == "Proxy":
                         score_dict = watermark_detector.detect(
                             text=text_to_detect,
                             z_threshold=args.z_threshold
+                        )
+                        
+                    # --- 分支 C: SWEET (新增) ---
+                    elif detector_type == "SWEET":
+                        # 使用预定义的 Gold Prompt
+                        gold_prompt_key = os.environ.get("SWEET_PROMPT_TYPE", "solution")
+                        gold_prompt = SWEET_BENCHMARK_PROMPTS.get(gold_prompt_key, SWEET_BENCHMARK_PROMPTS["solution"])
+                        
+                        print(f"[SWEET] Using Gold Prompt: {repr(gold_prompt)}")
+                        
+                        score_dict = watermark_detector.detect_with_model(
+                            text=text_to_detect,
+                            model=model_for_entropy,
+                            tokenizer=tokenizer_for_entropy,
+                            gold_prompt=gold_prompt,
                         )
 
                     print(f"[Watermark Report]")

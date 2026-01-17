@@ -27,16 +27,15 @@ from logits_processors.vllm_adapters.hf_logits_processor_adapter_initial import 
     HFLogitsProcessorAdapter,
 )
 
-_CODE_WATERMARK_DIR = Path(__file__).resolve().parents[3] / "third_party" / "code_watermark"
+_CODE_WATERMARK_DIR = Path(__file__).resolve().parents[2] / "third_party" / "code-watermark"
 if str(_CODE_WATERMARK_DIR) not in sys.path:
     sys.path.insert(0, str(_CODE_WATERMARK_DIR))
-
 try:
     from models.sweet import SweetLogitsProcessor
 except ImportError:
     SweetLogitsProcessor = None
 
-_MARKLLM_DIR = Path(__file__).resolve().parents[3] / "third_party" / "MarkLLM"
+_MARKLLM_DIR = Path(__file__).resolve().parents[2] / "third_party" / "MarkLLM"
 if str(_MARKLLM_DIR) not in sys.path:
     sys.path.insert(0, str(_MARKLLM_DIR))
 
@@ -271,6 +270,7 @@ class Sweet_VLLMAdapter(HFLogitsProcessorAdapter):
         gamma = float(os.environ.get("WATERMARK_GAMMA", 0.5))
         delta = float(os.environ.get("WATERMARK_DELTA", 2.0))
         secret_key = int(os.environ.get("WATERMARK_SECRET_KEY", 42))
+        vocab_size = len(tokenizer.get_vocab())
 
         super().__init__(
             vllm_config=vllm_config,
@@ -278,12 +278,12 @@ class Sweet_VLLMAdapter(HFLogitsProcessorAdapter):
             is_pin_memory=is_pin_memory,
             hf_processor_cls=SweetLogitsProcessor,
             hf_init_kwargs={
-                "vocab": list(tokenizer.get_vocab().values()),
+                "vocab_size":vocab_size,
                 "gamma": gamma,
                 "delta": delta,
                 "entropy_threshold": entropy_threshold,
                 "hash_key": secret_key,                
-                "seeding_scheme": "selfhash"           
+                "seeding_scheme": "simple_1"           
             },
             argmax_invariant=False,
             extra_kwargs_from_params=None,
