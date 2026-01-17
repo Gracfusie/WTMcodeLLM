@@ -16,7 +16,7 @@ if PROJECT_ROOT not in sys.path:
 
 from interact import chat_once  # type: ignore
 from evaluate.attacks import apply_attack, AttackName
-from evaluate.base import DummyZScoreDetector
+from evaluate.base import DummyZScoreDetector, ProxyDetector
 from evaluate.watermark_params import WatermarkParams
 
 
@@ -71,6 +71,38 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="override watermark_proxy_window_size",
+    )
+
+    # Proxy detector specific controls
+    parser.add_argument(
+        "--proxy-model",
+        type=str,
+        default=os.environ.get("WATERMARK_PROXY_MODEL"),
+        help="Proxy model path or hub id for proxy-guided detector",
+    )
+    parser.add_argument(
+        "--proxy-secret-key",
+        type=int,
+        default=os.environ.get("WATERMARK_SECRET_KEY"),
+        help="Secret key for proxy watermarker",
+    )
+    parser.add_argument(
+        "--proxy-template-prefix",
+        type=str,
+        default=os.environ.get("WATERMARK_PROXY_TEMPLATE_PREFIX", "<|fim_prefix|>"),
+        help="Prefix template for proxy detector",
+    )
+    parser.add_argument(
+        "--proxy-template-suffix",
+        type=str,
+        default=os.environ.get("WATERMARK_PROXY_TEMPLATE_SUFFIX", "<|fim_suffix|>\n<|fim_middle|>"),
+        help="Suffix template for proxy detector",
+    )
+    parser.add_argument(
+        "--z-threshold",
+        type=float,
+        default=4.0,
+        help="Z-score threshold used by proxy detector",
     )
 
     # Parameter grid controls
@@ -299,7 +331,20 @@ def run() -> None:
 
     system_prompt = os.environ.get("SYSTEM_PROMPT")
     prompts = load_prompts(args)
-    detector = DummyZScoreDetector()
+    try:
+        detector = ProxyDetector(
+            proxy_model=args.proxy_model,
+            entropy_threshold_default=args.watermark_entropy_threshold,
+            secret_key=args.proxy_secret_key,
+            window_size=args.watermark_window_size,
+            z_threshold=args.z_threshold,
+            prefix_str=args.proxy_template_prefix,
+            suffix_str=args.proxy_template_suffix,
+        )
+        print("[Init] Proxy detector ready.")
+    except Exception as e:
+        print(f"[警告] Proxy detector init failed, fallback to DummyZScoreDetector: {e}")
+        detector = DummyZScoreDetector()
     param_grid = build_param_grid(args)
 
     for idx, item in enumerate(prompts):

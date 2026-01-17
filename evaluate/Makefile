@@ -14,9 +14,10 @@ ATTACK ?= none
 REASONING ?= high
 
 # Hardcoded parameter lists (entropy, delta, window) - this is for grid runs of PROXY
-PARAM_ENT := 2.0,3.0
-PARAM_DEL := 0.0,0.2
-PARAM_WIN := 128,256,512
+# USAGE: 1,2,3,4,...
+PARAM_ENT := 0.5,1.5
+PARAM_DEL := 2
+PARAM_WIN := 256
 
 .PHONY: all grid default clean
 
@@ -25,7 +26,6 @@ all: grid
 # Grid run over hardcoded lists
 grid:
 	$(PY) $(RUNNER) \
-	  --model $(MODEL) \
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \
@@ -39,7 +39,6 @@ grid:
 # Small built-in sweep when no explicit lists are provided
 default:
 	$(PY) $(RUNNER) \
-	  --model $(MODEL) \
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \
