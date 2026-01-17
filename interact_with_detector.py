@@ -33,16 +33,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reasoning-effort", choices=["low", "medium", "high"], default="high")
     
     parser.add_argument("--enable-watermark-detection", action="store_true", default=True, help="启用水印检测")
-    parser.add_argument("--z-threshold", type=float, default=4.0, help="Z-score 阈值")
+    parser.add_argument("--z-threshold", type=float, default=, help="Z-score 阈值")
     parser.add_argument(
         "--detection-method", 
         choices=["wllm", "proxy"], 
-        default="proxy",
-        help="选择检测算法: 'wllm' (Baseline) 或 'proxy' (基于小模型)"
+        default=os.environ.get("WATERMARK_ALGORITHM"),
+        help="选择检测算法: 'wllm'或 'proxy'"
     )
-    parser.add_argument("--proxy-model", default="Qwen/Qwen2.5-Coder-1.5B-Instruct", help="[Proxy模式] Proxy 模型路径")
-    parser.add_argument("--entropy-threshold", type=float, default=0.5, help="[Proxy模式] 熵阈值")
-    parser.add_argument("--secret-key", type=int, default=42, help="[Proxy模式] 密钥")
+    parser.add_argument("--proxy-model", default=os.environ.get("WATERMARK_PROXY_MODEL"), help="[Proxy模式] Proxy 模型路径")
+    parser.add_argument("--entropy-threshold", type=float, default=os.environ.get("WATERMARK_ENTROPY_THRESHOLD"), help="[Proxy模式] 熵阈值")
+    parser.add_argument("--secret-key", type=int, default=os.environ.get("WATERMARK_SECRET_KEY"), help="[Proxy模式] 密钥")
 
     return parser
 
@@ -120,7 +120,7 @@ def main():
                 
                 watermark_detector = WLLMWatermarkDetector(
                     vocab=list(tokenizer.get_vocab().values()),
-                    gamma=0.25,
+                    gamma=0.25
                     delta=2.0,
                     seeding_scheme="selfhash",
                     device=device,
