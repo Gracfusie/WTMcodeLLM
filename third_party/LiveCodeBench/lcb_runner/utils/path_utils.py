@@ -1,4 +1,5 @@
 import pathlib
+from datetime import datetime
 
 from lcb_runner.lm_styles import LanguageModel, LMStyle
 from lcb_runner.utils.scenarios import Scenario
@@ -26,7 +27,8 @@ def get_output_path(model_repr:str, args) -> str:
     n = args.n
     temperature = args.temperature
     cot_suffix = "_cot" if args.cot_code_execution else ""
-    path = f"output/{model_repr}/{scenario}_{n}_{temperature}{cot_suffix}.json"
+    timestamp_suffix = f"_{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    path = f"output/{model_repr}/{scenario}_{n}_{temperature}{cot_suffix}{timestamp_suffix}.json"
     ensure_dir(path)
     return path
 

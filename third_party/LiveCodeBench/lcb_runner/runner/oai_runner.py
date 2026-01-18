@@ -87,6 +87,7 @@ class OpenAIRunner(BaseRunner):
             openai.APITimeoutError,
             openai.InternalServerError,
             openai.APIConnectionError,
+            json.decoder.JSONDecodeError
         ) as e:
             print("Exception: ", repr(e))
             print("Sleeping for 30 seconds...")
@@ -96,5 +97,6 @@ class OpenAIRunner(BaseRunner):
         except Exception as e:
             print(f"Failed to run the model for {prompt}!")
             print("Exception: ", repr(e))
+            import traceback; traceback.print_exc()
             raise e
         return [c.message.content for c in response.choices]
