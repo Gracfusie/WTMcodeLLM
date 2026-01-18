@@ -1,7 +1,7 @@
 # Makefile to run evaluate/runner.py with hardcoded parameter lists
 
 PY ?= python
-RUNNER := runner.py
+RUNNER := runner_new.py
 
 # Watermark algorithm to include in output filenames and pass-through (default: proxy)
 # 现在仅用于标记输出文件名、传递参数，因此在不跑proxy模型的时候要注意 make grid WATERMARK_ALGORITHM=...
@@ -16,6 +16,7 @@ INPUT_DIR ?= input
 OUTPUT_DIR ?= output
 ATTACK ?= none
 REASONING ?= high
+CONCURRENCY ?= 64
 
 # Hardcoded parameter lists (entropy, delta, window) - this is for grid runs of PROXY
 # USAGE: 1,2,3,4,...
@@ -33,9 +34,9 @@ grid:
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \
-	  --attack $(ATTACK) \
 	  --input-dir $(INPUT_DIR) \
 	  --output-dir $(OUTPUT_DIR) \
+	  --concurrency $(CONCURRENCY) \
 	  --entropy-list $(PARAM_ENT) \
 	  --delta-list $(PARAM_DEL) \
 	  --window-list $(PARAM_WIN)
@@ -46,9 +47,9 @@ default:
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \
-	  --attack $(ATTACK) \
 	  --input-dir $(INPUT_DIR) \
 	  --output-dir $(OUTPUT_DIR) \
+	  --concurrency $(CONCURRENCY) \
 	  --grid-default
 
 # Debug: single prompt + single param set (sampling + cap)
@@ -57,9 +58,9 @@ debug:
 	  --endpoint $(ENDPOINT) \
 	  --api-key $(API_KEY) \
 	  --reasoning-effort $(REASONING) \
-	  --attack $(ATTACK) \
 	  --input-dir $(INPUT_DIR) \
 	  --output-dir $(OUTPUT_DIR) \
+	  --concurrency 1 \
 	  --sample-count 1 \
 	  --sample-seed 0 \
 	  --max-param-sets 1
