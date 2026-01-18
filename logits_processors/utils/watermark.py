@@ -196,9 +196,9 @@ class ProxyWatermarkDetector:
         for i in range(len(texts)):
             g, t = green_counts[i], scored_counts[i]
             if t == 0:
-                results.append({"num_green_tokens": 0, "num_tokens_scored": 0, "green_fraction": 0.0, "z_score": 0.0, "prediction": False, "p_value": 0.0})
+                results.append({"num_total_tokens": len(all_tok_ids[i]), "num_green_tokens": 0, "num_tokens_scored": 0, "green_fraction": 0.0, "z_score": 0.0, "prediction": False, "p_value": 0.0})
             else:
                 z = (g - t * 0.5) / math.sqrt(t * 0.25)
-                results.append({"num_green_tokens": g, "num_tokens_scored": t, "green_fraction": g / t, "z_score": z, "prediction": z > z_threshold, "p_value": 0.0})
+                results.append({"num_total_tokens": len(all_tok_ids[i]), "num_green_tokens": g, "num_tokens_scored": t, "green_fraction": g / t, "z_score": z, "prediction": z > z_threshold, "p_value": 0.0})
         
         return results[0] if single else results

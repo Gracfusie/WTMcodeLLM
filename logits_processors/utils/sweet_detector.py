@@ -151,6 +151,30 @@ class SweetDetector:
             entropy=entropy_list
         )
 
+    def detect_without_model(self, text: str | list[str], current_tokenizer=None):
+        current_tokenizer = self.tokenizer if current_tokenizer is None else current_tokenizer
+        if current_tokenizer is None:
+             raise ValueError("Tokenizer missing. Please pass tokenizer to __init__ or detect_with_model.")
+
+        if self.vocab_size is None:
+            self.vocab_size = len(current_tokenizer.get_vocab())
+
+        def detect_single_str(t: str):
+            text_inputs = current_tokenizer(t, return_tensors="pt", add_special_tokens=False)
+            text_ids = text_inputs["input_ids"][0].to(self.device)
+            
+            return self._score_sequence(
+                input_ids=text_ids,
+                entropy=[1000. ] * len(text_ids)
+            )
+        
+        if isinstance(text, str):
+            return detect_single_str(text)
+        elif isinstance(text, list):
+            return [detect_single_str(t) for t in text]
+        else:
+            raise ValueError(f"Invalid text type: {type(text)}")
+
     def _score_sequence(self, input_ids, entropy):
         # 减去前缀长度 (simple_1 需要 1 个 token 做前缀，所以从第 2 个词开始检测)
         prefix_len = self.min_prefix_len 
@@ -183,7 +207,7 @@ class SweetDetector:
         # 统计结果
         if num_tokens_scored == 0:
              return {
-                "num_tokens_generated": num_tokens_generated,
+                "num_total_tokens": num_tokens_generated,
                 "num_tokens_scored": 0,
                 "num_green_tokens": 0,
                 "green_fraction": 0.0,
@@ -196,6 +220,7 @@ class SweetDetector:
         p_value = self._compute_p_value(z_score)
         
         return {
+            "num_total_tokens": num_tokens_generated,
             "num_green_tokens": green_token_count,
             "num_tokens_scored": num_tokens_scored,
             "green_fraction": green_token_count / num_tokens_scored,
