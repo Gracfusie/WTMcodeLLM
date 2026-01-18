@@ -20,9 +20,13 @@ CONCURRENCY ?= 64
 
 # Hardcoded parameter lists (entropy, delta, window) - this is for grid runs of PROXY
 # USAGE: 1,2,3,4,...
-PARAM_ENT := 0.5,1.5
-PARAM_DEL := 2
-PARAM_WIN := 256
+PARAM_ENT := 0.25,0.5,1.0
+PARAM_DEL := 1,2,3,10
+PARAM_WIN := 128,256
+
+PARAM_ENT_B := 0.5
+PARAM_DEL_B := 2
+PARAM_WIN_B := 256
 
 # Midput -> output conversion (format_adapter)
 MIDPUT_INPUT ?= midput/Scenario.codegeneration_1_0.7_eval_all.json
@@ -30,7 +34,7 @@ CONVERT_OUTPUT_DIR ?= output/converted
 CONVERT_BASE_STEM ?= scenario
 CONVERT_LIMIT ?=
 
-.PHONY: all grid default debug convert clean
+.PHONY: all grid vary default debug convert clean
 
 all: grid
 
@@ -45,6 +49,42 @@ grid:
 	  --concurrency $(CONCURRENCY) \
 	  --entropy-list $(PARAM_ENT) \
 	  --delta-list $(PARAM_DEL) \
+	  --window-list $(PARAM_WIN)
+
+# Partial sweeps: vary one parameter at a time, others fixed to baseline (PARAM_*_B)
+vary:
+	# Vary entropy only
+	WATERMARK_ALGORITHM=$(WATERMARK_ALGORITHM) $(PY) $(RUNNER) \
+	  --endpoint $(ENDPOINT) \
+	  --api-key $(API_KEY) \
+	  --reasoning-effort $(REASONING) \
+	  --input-dir $(INPUT_DIR) \
+	  --output-dir $(OUTPUT_DIR) \
+	  --concurrency $(CONCURRENCY) \
+	  --entropy-list $(PARAM_ENT) \
+	  --delta-list $(PARAM_DEL_B) \
+	  --window-list $(PARAM_WIN_B)
+	# Vary delta only
+	WATERMARK_ALGORITHM=$(WATERMARK_ALGORITHM) $(PY) $(RUNNER) \
+	  --endpoint $(ENDPOINT) \
+	  --api-key $(API_KEY) \
+	  --reasoning-effort $(REASONING) \
+	  --input-dir $(INPUT_DIR) \
+	  --output-dir $(OUTPUT_DIR) \
+	  --concurrency $(CONCURRENCY) \
+	  --entropy-list $(PARAM_ENT_B) \
+	  --delta-list $(PARAM_DEL) \
+	  --window-list $(PARAM_WIN_B)
+	# Vary window only
+	WATERMARK_ALGORITHM=$(WATERMARK_ALGORITHM) $(PY) $(RUNNER) \
+	  --endpoint $(ENDPOINT) \
+	  --api-key $(API_KEY) \
+	  --reasoning-effort $(REASONING) \
+	  --input-dir $(INPUT_DIR) \
+	  --output-dir $(OUTPUT_DIR) \
+	  --concurrency $(CONCURRENCY) \
+	  --entropy-list $(PARAM_ENT_B) \
+	  --delta-list $(PARAM_DEL_B) \
 	  --window-list $(PARAM_WIN)
 
 # Small built-in sweep when no explicit lists are provided
