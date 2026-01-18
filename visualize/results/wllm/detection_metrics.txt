@@ -1,0 +1,4 @@
+threshold=4.0
+TPR(pos, z>thr)=0.3413
+FPR(neg, z>thr)=0.1057
+AUROC=0.731546
