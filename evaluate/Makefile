@@ -33,6 +33,11 @@ MIDPUT_INPUT ?= midput/Scenario.codegeneration_1_0.7_eval_all.json
 CONVERT_OUTPUT_DIR ?= output/converted
 CONVERT_BASE_STEM ?= scenario
 CONVERT_LIMIT ?=
+PROXY_MODEL ?= $(WATERMARK_PROXY_MODEL)
+SECRET_KEY ?= $(WATERMARK_SECRET_KEY)
+Z_THRESHOLD ?= 4.0
+TEMPLATE_PREFIX ?= $(WATERMARK_PROXY_TEMPLATE_PREFIX)
+TEMPLATE_SUFFIX ?= $(WATERMARK_PROXY_TEMPLATE_SUFFIX)
 
 .PHONY: all grid vary default debug convert clean
 
@@ -117,6 +122,17 @@ convert:
 	  --input $(MIDPUT_INPUT) \
 	  --output-dir $(CONVERT_OUTPUT_DIR) \
 	  --base-stem $(CONVERT_BASE_STEM) \
+	  --alg $(WATERMARK_ALGORITHM) \
+	  --entropy-threshold $(ENT) \
+	  --delta $(DEL) \
+	  --proxy-window-size $(WIN) \
+	  --detection-method proxy \
+	  --proxy-model $(PROXY_MODEL) \
+	  --secret-key $(SECRET_KEY) \
+	  --z-threshold $(Z_THRESHOLD) \
+	  --proxy-template-prefix "$(TEMPLATE_PREFIX)" \
+	  --proxy-template-suffix "$(TEMPLATE_SUFFIX)" \
+	  --concurrency 16 \
 	  $(if $(CONVERT_LIMIT),--limit $(CONVERT_LIMIT),)
 
 # Clean outputs

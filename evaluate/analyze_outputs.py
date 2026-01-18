@@ -115,6 +115,79 @@ def plot_z_distributions(df: pd.DataFrame, out_dir: str) -> None:
         plt.savefig(out_path)
         plt.close()
 
+    # Overlay all params in one figure for quick comparison
+    overlay = df.dropna(subset=['z_score']).copy()
+    if not overlay.empty:
+        overlay['label'] = overlay.apply(
+            lambda r: f"{r['algorithm']}|ent={r['entropy_threshold']}|d={r['delta']}|w={r['proxy_window_size']}",
+            axis=1,
+        )
+        counts = overlay['label'].value_counts().to_dict()
+        overlay['label_with_count'] = overlay['label'].apply(lambda l: f"{l} (n={counts.get(l, 0)})")
+        plt.figure(figsize=(10, 6))
+        sns.kdeplot(data=overlay, x='z_score', hue='label_with_count', common_norm=False)
+        plt.title('z-score distributions (all params)')
+        plt.xlabel('z-score')
+        plt.tight_layout()
+        out_path = os.path.join(out_dir, 'zdist_all_params.png')
+        plt.savefig(out_path)
+        plt.close()
+
+
+def _mask_eq(series: pd.Series, target: float) -> pd.Series:
+    try:
+        return series.notna() & series.astype(float).eq(float(target))
+    except Exception:
+        return pd.Series([False] * len(series), index=series.index)
+
+
+def plot_proxy_param_sweeps(
+    df: pd.DataFrame,
+    out_dir: str,
+    base_ent: float = 0.5,
+    base_delta: float = 2.0,
+    base_win: int = 256,
+) -> None:
+    os.makedirs(out_dir, exist_ok=True)
+    proxy = df[(df['algorithm'] == 'proxy') & df['z_score'].notna()].copy()
+    if proxy.empty:
+        return
+
+    def _make_plot(sub: pd.DataFrame, label_field: str, title: str, fname: str) -> None:
+        if sub.empty:
+            return
+        counts = sub[label_field].value_counts().to_dict()
+        sub['label_with_count'] = sub[label_field].apply(lambda l: f"{l} (n={counts.get(l, 0)})")
+        plt.figure(figsize=(8, 5))
+        sns.kdeplot(data=sub, x='z_score', hue='label_with_count', common_norm=False)
+        plt.title(title)
+        plt.xlabel('z-score')
+        plt.tight_layout()
+        out_path = os.path.join(out_dir, fname)
+        plt.savefig(out_path)
+        plt.close()
+
+    # Sweep entropy_threshold with delta/window fixed at baseline
+    ent_mask = _mask_eq(proxy['delta'], base_delta) & _mask_eq(proxy['proxy_window_size'], base_win)
+    ent_df = proxy[ent_mask].copy()
+    if not ent_df.empty:
+        ent_df['label'] = ent_df['entropy_threshold'].apply(lambda v: f"ent={v}")
+        _make_plot(ent_df, 'label', f'proxy z-score by entropy (delta={base_delta}, win={base_win})', 'proxy_zdist_sweep_ent.png')
+
+    # Sweep delta with entropy/window fixed at baseline
+    delta_mask = _mask_eq(proxy['entropy_threshold'], base_ent) & _mask_eq(proxy['proxy_window_size'], base_win)
+    delta_df = proxy[delta_mask].copy()
+    if not delta_df.empty:
+        delta_df['label'] = delta_df['delta'].apply(lambda v: f"delta={v}")
+        _make_plot(delta_df, 'label', f'proxy z-score by delta (ent={base_ent}, win={base_win})', 'proxy_zdist_sweep_delta.png')
+
+    # Sweep proxy_window_size with entropy/delta fixed at baseline
+    win_mask = _mask_eq(proxy['entropy_threshold'], base_ent) & _mask_eq(proxy['delta'], base_delta)
+    win_df = proxy[win_mask].copy()
+    if not win_df.empty:
+        win_df['label'] = win_df['proxy_window_size'].apply(lambda v: f"win={int(v)}")
+        _make_plot(win_df, 'label', f'proxy z-score by window (ent={base_ent}, delta={base_delta})', 'proxy_zdist_sweep_win.png')
+
 
 def compute_tpr_fpr(df: pd.DataFrame, out_dir: str) -> None:
     os.makedirs(out_dir, exist_ok=True)
@@ -203,6 +276,9 @@ def main():
 
     # 1. z-score distributions
     plot_z_distributions(df, figs_dir)
+
+    # 1b. proxy param sweeps (vary one param, fix others to defaults)
+    plot_proxy_param_sweeps(df, figs_dir)
 
     # 2. TPR/FPR analysis vs z-threshold
     compute_tpr_fpr(df, figs_dir)
