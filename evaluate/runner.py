@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import sys
+import random
 from datetime import datetime
 from typing import List, Optional, Dict, Any
 
@@ -161,17 +162,104 @@ def build_parser() -> argparse.ArgumentParser:
         default=os.environ.get("DETECTOR_OUTPUT_DIR", "output"),
         help="Output directory for results (default: output); overridden by extra_args if present",
     )
+    parser.add_argument(
+        "--sample-count",
+        type=int,
+        default=None,
+        help="Randomly sample this many prompts from loaded inputs (for quick debugging)",
+    )
+    parser.add_argument(
+        "--sample-seed",
+        type=int,
+        default=None,
+        help="Optional RNG seed used when --sample-count is set",
+    )
+    parser.add_argument(
+        "--max-param-sets",
+        type=int,
+        default=None,
+        help="Limit the number of parameter combinations to run (debug helper)",
+    )
     return parser
+
+
+def _sanitize_stem_token(token: str) -> str:
+    return token.replace("/", "-").replace(":", "-").replace(" ", "-")
+
+
+def _load_prompts_from_json(path: str, base_stem: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        try:
+            data = json.load(f)
+        except Exception as exc:
+            raise ValueError(f"无法解析 JSON 文件: {path}: {exc}") from exc
+
+    # Normalize JSON payload into a list of prompt-bearing entries
+    if isinstance(data, list):
+        records = data
+    elif isinstance(data, dict):
+        for key in ("prompts", "data", "items", "samples"):
+            if isinstance(data.get(key), list):
+                records = data[key]
+                break
+        else:
+            records = [data]
+    else:
+        records = [data]
+
+    for idx, entry in enumerate(records):
+        text: Optional[str] = None
+        stem_hint: Optional[str] = None
+        if isinstance(entry, str):
+            text = entry
+        elif isinstance(entry, dict):
+            for key in ("prompt", "text", "content", "question_content", "input"):
+                val = entry.get(key)
+                if isinstance(val, str):
+                    text = val
+                    break
+            for key in ("name", "id", "uid", "slug", "title", "question_title"):
+                val = entry.get(key)
+                if isinstance(val, str) and val.strip():
+                    stem_hint = _sanitize_stem_token(val.strip())
+                    break
+        if not text:
+            continue
+        stem = f"{base_stem}_{stem_hint or 'json'}_{idx:03d}"
+        items.append({"text": text.strip(), "stem": stem})
+    return items
+
+
+def _scan_input_dir(input_dir: str) -> List[Dict[str, Any]]:
+    items: List[Dict[str, Any]] = []
+    if not os.path.isdir(input_dir):
+        raise ValueError(f"Input dir not found: {input_dir}")
+
+    for name in sorted(os.listdir(input_dir)):
+        path = os.path.join(input_dir, name)
+        if not os.path.isfile(path):
+            continue
+        stem, ext = os.path.splitext(name)
+        ext = ext.lower()
+        if ext in (".txt", ".md"):
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read().strip()
+            if text:
+                items.append({"text": text, "stem": stem})
+        elif ext == ".json":
+            items.extend(_load_prompts_from_json(path, stem))
+    if not items:
+        raise ValueError("No prompts found in input dir; add .txt/.md/.json files or use --prompt/--prompts-file.")
+    return items
 
 
 def load_prompts(args: argparse.Namespace) -> List[Dict[str, Any]]:
     """Return list of {text, stem} for naming outputs."""
     items: List[Dict[str, Any]] = []
-    # Highest precedence: explicit single prompt
     if args.prompt:
         items.append({"text": args.prompt, "stem": "prompt_cli"})
         return items
-    # Next: prompts file, one per line
     if args.prompts_file:
         with open(args.prompts_file, "r", encoding="utf-8") as f:
             for i, line in enumerate(f):
@@ -180,24 +268,18 @@ def load_prompts(args: argparse.Namespace) -> List[Dict[str, Any]]:
                     items.append({"text": ln, "stem": f"prompts_file_{i:03d}"})
         if items:
             return items
-    # Default: scan input directory and read whole file per prompt
-    input_dir = args.input_dir
-    if not os.path.isdir(input_dir):
-        raise ValueError(f"Input dir not found: {input_dir}")
-    for name in sorted(os.listdir(input_dir)):
-        path = os.path.join(input_dir, name)
-        if not os.path.isfile(path):
-            continue
-        if not any(name.endswith(ext) for ext in (".txt", ".md")):
-            continue
-        with open(path, "r", encoding="utf-8") as f:
-            text = f.read().strip()
-            if text:
-                stem, _ = os.path.splitext(name)
-                items.append({"text": text, "stem": stem})
-    if not items:
-        raise ValueError("No prompts found in input dir; add .txt/.md files or use --prompt/--prompts-file.")
-    return items
+    return _scan_input_dir(args.input_dir)
+
+
+def sample_prompts(prompts: List[Dict[str, Any]], count: Optional[int], seed: Optional[int]) -> List[Dict[str, Any]]:
+    if count is None:
+        return prompts
+    if count <= 0:
+        raise ValueError("--sample-count must be positive when provided")
+    if count >= len(prompts):
+        return prompts
+    rng = random.Random(seed)
+    return rng.sample(prompts, count)
 
 
 def build_extra_args(args: argparse.Namespace) -> Dict[str, Any]:
@@ -321,44 +403,23 @@ def build_output_stem(
     return f"{base_stem}.{m}.{attack}.{ent_s}.{dlt_s}.{win_s}.alg{alg}"
 
 
-def run() -> None:
-    args = build_parser().parse_args()
-    client = OpenAI(base_url=args.endpoint, api_key=args.api_key)
-
-    extra_args = build_extra_args(args)
-    output_dir = resolve_output_dir(args.output_dir, extra_args)
-
-    if extra_args:
-        print(f"使用 override 参数: {extra_args}")
-    print(f"结果输出到: {output_dir}")
-
-    system_prompt = os.environ.get("SYSTEM_PROMPT")
-    prompts = load_prompts(args)
-    try:
-        detector = ProxyDetector(
-            proxy_model=args.proxy_model,
-            entropy_threshold_default=args.watermark_entropy_threshold,
-            secret_key=args.proxy_secret_key,
-            window_size=args.watermark_window_size,
-            z_threshold=args.z_threshold,
-            prefix_str=args.proxy_template_prefix,
-            suffix_str=args.proxy_template_suffix,
-        )
-        print("[Init] Proxy detector ready.")
-    except Exception as e:
-        print(f"[警告] Proxy detector init failed, fallback to DummyZScoreDetector: {e}")
-        detector = DummyZScoreDetector()
-    param_grid = build_param_grid(args)
-
+def start_runs(
+    prompts: List[Dict[str, Any]],
+    args: argparse.Namespace,
+    client: OpenAI,
+    detector: ProxyDetector,
+    param_grid: List[WatermarkParams],
+    extra_args: Dict[str, Any],
+    output_dir: str,
+    system_prompt: Optional[str],
+) -> None:
     for idx, item in enumerate(prompts):
-        # Prepare messages with optional system prompt (as in interact.py)
         messages = []
         if system_prompt:
             messages.append({"role": "system", "content": system_prompt})
         messages.append({"role": "user", "content": item["text"]})
 
         for pidx, wm_params in enumerate(param_grid):
-            # Merge per-run params into extra_args
             xargs = dict(extra_args)
             if wm_params.entropy_threshold is not None:
                 xargs["watermark_entropy_threshold"] = wm_params.entropy_threshold
@@ -397,7 +458,11 @@ def run() -> None:
                 "sample_raw": answer,
                 "sample_attacked": attacked,
                 "z_score": z,
-                "watermark_algorithm": (extra_args.get("watermark_algorithm") if extra_args and "watermark_algorithm" in extra_args else os.environ.get("WATERMARK_ALGORITHM", "unknown")),
+                "watermark_algorithm": (
+                    extra_args.get("watermark_algorithm")
+                    if extra_args and "watermark_algorithm" in extra_args
+                    else os.environ.get("WATERMARK_ALGORITHM", "unknown")
+                ),
                 "watermark_params": {
                     "entropy_threshold": wm_params.entropy_threshold,
                     "delta": wm_params.delta,
@@ -409,6 +474,55 @@ def run() -> None:
             stem = build_output_stem(item["stem"], args.model, args.attack, wm_params, algorithm=algorithm)
             out_path = save_result(output_dir, result, stem)
             print(f"完成: z={z:.4f} -> {out_path}")
+
+
+def run() -> None:
+    args = build_parser().parse_args()
+    client = OpenAI(base_url=args.endpoint, api_key=args.api_key)
+
+    extra_args = build_extra_args(args)
+    output_dir = resolve_output_dir(args.output_dir, extra_args)
+
+    if extra_args:
+        print(f"使用 override 参数: {extra_args}")
+    print(f"结果输出到: {output_dir}")
+
+    system_prompt = os.environ.get("SYSTEM_PROMPT")
+    prompts = load_prompts(args)
+    prompts = sample_prompts(prompts, args.sample_count, args.sample_seed)
+    if args.sample_count:
+        print(f"[采样] 使用 {len(prompts)} / {args.sample_count} 个输入样例 (seed={args.sample_seed})")
+    try:
+        detector = ProxyDetector(
+            proxy_model=args.proxy_model,
+            entropy_threshold_default=args.watermark_entropy_threshold,
+            secret_key=args.proxy_secret_key,
+            window_size=args.watermark_window_size,
+            z_threshold=args.z_threshold,
+            prefix_str=args.proxy_template_prefix,
+            suffix_str=args.proxy_template_suffix,
+        )
+        print("[Init] Proxy detector ready.")
+    except Exception as e:
+        print(f"[警告] Proxy detector init failed, fallback to DummyZScoreDetector: {e}")
+        detector = DummyZScoreDetector()
+    param_grid = build_param_grid(args)
+    if args.max_param_sets is not None:
+        if args.max_param_sets <= 0:
+            raise ValueError("--max-param-sets must be positive when provided")
+        param_grid = param_grid[: args.max_param_sets]
+        print(f"[调试] 限制参数组合数量: {len(param_grid)}")
+
+    start_runs(
+        prompts=prompts,
+        args=args,
+        client=client,
+        detector=detector,
+        param_grid=param_grid,
+        extra_args=extra_args,
+        output_dir=output_dir,
+        system_prompt=system_prompt,
+    )
 
 
 if __name__ == "__main__":

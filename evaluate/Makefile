@@ -23,7 +23,7 @@ PARAM_ENT := 0.5,1.5
 PARAM_DEL := 2
 PARAM_WIN := 256
 
-.PHONY: all grid default clean
+.PHONY: all grid default debug clean
 
 all: grid
 
@@ -50,6 +50,19 @@ default:
 	  --input-dir $(INPUT_DIR) \
 	  --output-dir $(OUTPUT_DIR) \
 	  --grid-default
+
+# Debug: single prompt + single param set (sampling + cap)
+debug:
+	WATERMARK_ALGORITHM=$(WATERMARK_ALGORITHM) $(PY) $(RUNNER) \
+	  --endpoint $(ENDPOINT) \
+	  --api-key $(API_KEY) \
+	  --reasoning-effort $(REASONING) \
+	  --attack $(ATTACK) \
+	  --input-dir $(INPUT_DIR) \
+	  --output-dir $(OUTPUT_DIR) \
+	  --sample-count 1 \
+	  --sample-seed 0 \
+	  --max-param-sets 1
 
 # Clean outputs
 clean:
