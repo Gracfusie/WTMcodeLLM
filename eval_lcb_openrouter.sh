@@ -3,7 +3,7 @@
 source env.sh
 
 export OPENAI_BASE_URL="https://openrouter.ai/api/v1"
-export OPENAI_KEY="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"
+export OPENAI_KEY=""
 export OPENAI_SUPPORT_N=0
 
 cd third_party/LiveCodeBench
@@ -13,8 +13,8 @@ python -m lcb_runner.runner.main \
   --scenario codegeneration \
   --evaluate \
   --release_version v6 \
-  --n 3 \
-  --multiprocess 10 \
+  --n 9 \
+  --multiprocess 3 \
   --temperature 0.7 \
   --max_tokens 16384 \
   --openai_timeout 7200 \

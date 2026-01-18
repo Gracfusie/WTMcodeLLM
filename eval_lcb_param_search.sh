@@ -8,11 +8,13 @@ export OPENAI_KEY="${OPENAI_KEY:-EMPTY}"
 cd third_party/LiveCodeBench
 
 param_grid=(
+  "0.5 2.0"
+  "0.5 2.0"
+  "0.5 2.0"
   "1.0 2.0"
   "2.0 2.0"
   "0.5 4.0"
   "0.5 1.0"
-  "0.5 2.0"
 )
 
 for pair in "${param_grid[@]}"; do
@@ -23,7 +25,7 @@ for pair in "${param_grid[@]}"; do
 
   name_entropy="${entropy//./p}"
   name_delta="${delta//./p}"
-  custom_name="entropy${name_entropy}_delta${name_delta}"
+  custom_name="test2-entropy${name_entropy}_delta${name_delta}"
 
   echo "运行参数搜索: entropy=${entropy}, delta=${delta}, name=${custom_name}"
 
