@@ -505,8 +505,25 @@ def start_runs(
         attacked = answer  # no attack; pass-through
         try:
             with detect_lock:
-                z = detector.detect(attacked, wm_params)
+                raw_z = detector.detect(attacked, xargs["watermark_entropy_threshold"] if "watermark_entropy_threshold" in xargs else 3.0)
+                # Normalize detector output to a float z-score for logging/output
+                if isinstance(raw_z, dict):
+                    z_val = raw_z.get("z_score")
+                    if z_val is None:
+                        for v in raw_z.values():
+                            if isinstance(v, (int, float)):
+                                z_val = v
+                                break
+                else:
+                    z_val = raw_z
+
+                try:
+                    z = float(z_val)
+                except Exception:
+                    raise TypeError(f"检测器返回的 z 值无法转换为浮点数: {raw_z}")
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             return f"[错误] 检测失败 prompt#{idx} param#{pidx}: {e}"
 
         result = {
@@ -626,6 +643,7 @@ def init_detector(args: argparse.Namespace) -> ProxyDetector:
                 print("[Init] WLLM 检测器就绪。")
             except Exception as e:
                 print(f"[Error] WLLM 检测器初始化失败: {e}")
+    return watermark_detector
 
 
 def run() -> None:

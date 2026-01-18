@@ -24,7 +24,13 @@ PARAM_ENT := 0.5,1.5
 PARAM_DEL := 2
 PARAM_WIN := 256
 
-.PHONY: all grid default debug clean
+# Midput -> output conversion (format_adapter)
+MIDPUT_INPUT ?= midput/Scenario.codegeneration_1_0.7_eval_all.json
+CONVERT_OUTPUT_DIR ?= output/converted
+CONVERT_BASE_STEM ?= scenario
+CONVERT_LIMIT ?=
+
+.PHONY: all grid default debug convert clean
 
 all: grid
 
@@ -64,6 +70,14 @@ debug:
 	  --sample-count 1 \
 	  --sample-seed 0 \
 	  --max-param-sets 1
+
+# Convert midput JSON to analyze_outputs-compatible per-sample JSONs
+convert:
+	$(PY) format_adapter.py \
+	  --input $(MIDPUT_INPUT) \
+	  --output-dir $(CONVERT_OUTPUT_DIR) \
+	  --base-stem $(CONVERT_BASE_STEM) \
+	  $(if $(CONVERT_LIMIT),--limit $(CONVERT_LIMIT),)
 
 # Clean outputs
 clean:
