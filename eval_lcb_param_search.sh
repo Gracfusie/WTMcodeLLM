@@ -42,5 +42,3 @@ for pair in "${param_grid[@]}"; do
     --eval_limit 50 \
     --custom_output_save_name "${custom_name}"
 done
-
-echo "完成。输出位于 output/<model_repr>/codegeneration_*.json 及评测文件。"

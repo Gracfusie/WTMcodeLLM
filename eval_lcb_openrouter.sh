@@ -19,6 +19,3 @@ python -m lcb_runner.runner.main \
   --max_tokens 16384 \
   --openai_timeout 7200 \
   --eval_limit 50
-
-echo "完成。输出位于 output/<model_repr>/codegeneration_*.json 及评测文件。"
-

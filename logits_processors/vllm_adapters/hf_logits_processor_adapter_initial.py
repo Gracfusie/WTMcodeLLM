@@ -12,8 +12,7 @@ from vllm.multimodal.registry import cached_tokenizer_from_config
 
 
 class GPTOSSChannelState(Enum):
-    """GPT-OSS 对话通道状态。"""
-
+"""对于 OSS，需要在 thinking 后再加水印"""
     NO_CHANNEL = "no_channel"
     AWAITING_CHANNEL_NAME = "awaiting_channel_name"
     FINAL = "final"
@@ -23,11 +22,7 @@ class GPTOSSChannelState(Enum):
 
 
 class HFLogitsProcessorAdapter(AdapterLogitsProcessor):
-    """将 HuggingFace 的 request 级 LogitsProcessor 适配为 vLLM 批处理接口。
-
-    适用于拥有 __call__(input_ids, scores) -> scores 签名的 HF LogitsProcessor。
-    运行时为每个 request 维护一个独立的 HF processor 实例，使用 prompt_ids +
-    output_ids 组装 input_ids 张量，再对 logits 行进行改写。
+    """将 HuggingFace 的 LogitsProcessor 适配为 vLLM 接口。
 
     vLLM 侧实例通常不再暴露额外参数；HF 侧具体参数通过 hf_init_kwargs /
     extra_kwargs_from_params 固定在实例中。
@@ -51,7 +46,8 @@ class HFLogitsProcessorAdapter(AdapterLogitsProcessor):
         self._argmax_invariant = argmax_invariant
         # 若需要从 SamplingParams 读取自定义参数创建 HF processor，可提供回调
         self.extra_kwargs_from_params = extra_kwargs_from_params
-        # GPT-OSS channel 识别（用于 gating，仅 FINAL 走 HF processor）；默认关闭以消除模型依赖
+
+        # 现在已经不用 OSS 了
         self._gptoss_enabled = False
         self._gptoss_special_ids_set: set[int] = set()
         self._gptoss_start_id: Optional[int] = None
@@ -59,20 +55,18 @@ class HFLogitsProcessorAdapter(AdapterLogitsProcessor):
         self._gptoss_final_first_id: Optional[int] = None
         self._gptoss_analysis_first_id: Optional[int] = None
         self._gptoss_commentary_first_id: Optional[int] = None
-        # 仅在配置需要时初始化 GPT-OSS 通道检测，失败则静默回落为“总是处理”模式
+
         if getattr(vllm_config.model_config, "gptoss_channel_detection", False):
             self._init_gptoss_detector(vllm_config)
 
     @classmethod
     def validate_params(cls, sampling_params: SamplingParams):
-        # 默认不做额外校验，使用者可按需覆写
         return None
 
     def is_argmax_invariant(self) -> bool:
         return self._argmax_invariant
 
     def _init_gptoss_detector(self, vllm_config: VllmConfig) -> None:
-        """初始化 GPT-OSS channel 检测；失败时关闭 gating，保持通用性。"""
 
         tokenizer = cached_tokenizer_from_config(vllm_config.model_config)
         if tokenizer is None:

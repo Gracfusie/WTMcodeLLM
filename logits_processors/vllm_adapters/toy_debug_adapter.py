@@ -14,9 +14,7 @@ from vllm.multimodal.registry import cached_tokenizer_from_config
 
 
 class ToyDebugVLLMAdapter(HFLogitsProcessorAdapter):
-    """固定参数的玩具调试适配器，用于 vLLM CLI 测试。
-
-    不改 logits，只打印前缀和 top-k 信息。CLI 通过 FQCN 引入，无需再传参。
+    """固定参数的玩具调试适配器
     """
 
     def __init__(
@@ -31,7 +29,6 @@ class ToyDebugVLLMAdapter(HFLogitsProcessorAdapter):
             is_pin_memory=is_pin_memory,
             hf_processor_cls=ToyDebugLogitsProcessor,
             hf_init_kwargs={
-                # 使用 vLLM 内置缓存获取 tokenizer，不额外占 GPU
                 "tokenizer": cached_tokenizer_from_config(
                     vllm_config.model_config
                 ),

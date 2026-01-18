@@ -5,7 +5,7 @@ import scipy.stats
 
 class SweetDetector:
     """
-    SweetDetector (Standalone Version)
+    SweetDetector
     
     - Seeding Scheme: 'simple_1' (Context Width = 1)
     - Hash Logic: rng.manual_seed(hash_key * prev_token)
@@ -50,25 +50,14 @@ class SweetDetector:
         self.rng.manual_seed(self.hash_key * prev_token) 
 
     def _get_greenlist_ids(self, input_ids: torch.LongTensor) -> list[int]:
-        """
-        获取绿名单 ID
-        """
-        # 1. 设置种子
         self._seed_rng(input_ids)
-
-        # 2. 计算绿名单大小
         greenlist_size = int(self.vocab_size * self.gamma)
-        
-        # 3. 生成随机排列 (与生成端一致)
         vocab_permutation = torch.randperm(self.vocab_size, generator=self.rng)
-        
-        # 4. 截取前 N 个
         greenlist_ids = vocab_permutation[:greenlist_size]
         
         return greenlist_ids.tolist()
 
     def _compute_entropy(self, logits: torch.Tensor) -> list[float]:
-        """计算熵"""
         probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
         # Entropy = - sum(p * log p)
@@ -120,13 +109,11 @@ class SweetDetector:
         if len(text_ids) == 0:
             return {"error": "Text empty", "prediction": False}
 
-        # 2. 模型前向传播 (计算熵)
         with torch.no_grad():
             outputs = model(full_input_ids.unsqueeze(0))
             # Logits 形状: [SeqLen, Vocab]
             all_logits = outputs.logits[0]
 
-        # 3. 对齐 Logits 和 Token
         start_idx = max(0, prompt_len - 1)
         
         if prompt_len > 0:
@@ -145,7 +132,6 @@ class SweetDetector:
         # 截断以确保长度一致
         entropy_list = entropy_list[:len(text_ids)]
 
-        # 4. 核心评分循环
         return self._score_sequence(
             input_ids=text_ids,
             entropy=entropy_list

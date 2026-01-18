@@ -5,10 +5,6 @@ import math
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 class ProxyLogitsGuidedWatermarker:
-    """
-    1. Entropy-based Switch: Do NOT add watermark when entropy is low
-    2. Logits-guided Sampling: 利用小模型的Logits 排序进行红绿名单分组
-    """
     def __init__(self, entropy_threshold=0.5, delta=2.0, vocab_size=100, secret_key: int = 42):
         self.entropy_threshold = entropy_threshold
         self.delta = delta

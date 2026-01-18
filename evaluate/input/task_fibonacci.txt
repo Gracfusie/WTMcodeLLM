@@ -1,5 +1,0 @@
-You are a Python developer. Implement a function `fib(n: int) -> int` that returns the nth Fibonacci number with:
-- iterative solution
-- input validation (n >= 0)
-- small memoization for repeated calls
-Provide doctests and a brief complexity note.
