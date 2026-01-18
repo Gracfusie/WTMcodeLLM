@@ -128,101 +128,77 @@ class ProxyWatermarkDetector:
                  prefix_ids: list[int], suffix_ids: list[int], window_size: int = -1):
         self.watermarker = watermarker
         self.proxy_model = proxy_model
-        self.tokenizer = tokenizer #proxy model的tokenizer
+        self.tokenizer = tokenizer
         self.device = device
-        # proxy model的prefix, suffix以及window
         self.prefix_ids = prefix_ids
         self.suffix_ids = suffix_ids
         self.window_size = window_size
 
-    def detect(self, text: str, z_threshold: float = 4.0):
-        #编码 Answer
-        text_inputs = self.tokenizer(text, return_tensors="pt", add_special_tokens=False)
-        output_tok_ids = text_inputs.input_ids[0].tolist()
-        output_tok_ids = text_inputs.input_ids[0].tolist()
+    def detect(self, text: str | list[str], z_threshold: float = 4.0) -> dict | list[dict]:
+        single = isinstance(text, str)
+        texts = [text] if single else text
         
-        if len(output_tok_ids) == 0:
-             return {"error": "Text too short", "prediction": False}
-
-        num_tokens = len(output_tok_ids)
-        if len(output_tok_ids) == 0:
-             return {"error": "Text too short", "prediction": False}
-
-        num_tokens = len(output_tok_ids)
-        green_tokens = 0
-        total_scored = 0
-        total_scored = 0
+        all_tok_ids = [self.tokenizer(t, return_tensors="pt", add_special_tokens=False).input_ids[0].tolist() for t in texts]
+        max_len = max(len(t) for t in all_tok_ids) if all_tok_ids else 0
         
-        #逐个Token检测
-        for i in range(num_tokens):
+        if max_len == 0:
+            results = [{"num_green_tokens": 0, "num_tokens_scored": 0, "green_fraction": 0.0, "z_score": 0.0, "prediction": False, "p_value": 0.0} for _ in texts]
+            return results[0] if single else results
+        
+        green_counts = [0] * len(texts)
+        scored_counts = [0] * len(texts)
+        
+        for pos in range(max_len):
+            batch_indices = [i for i, toks in enumerate(all_tok_ids) if pos < len(toks)]
+            if not batch_indices:
+                continue
             
-            #model forward
-            target_token_id = output_tok_ids[i]
+            input_seqs = []
+            target_tokens = []
+            last_tokens = []
             
-            #Prefix + Context(Windowed) + Suffix
-            current_generated = output_tok_ids[:i]
+            for i in batch_indices:
+                toks = all_tok_ids[i]
+                target_tokens.append(toks[pos])
+                last_tokens.append(toks[pos - 1] if pos > 0 else 0)
+                context = toks[:pos]
+                if self.window_size > 0 and len(context) > self.window_size:
+                    context = context[-self.window_size:]
+                input_seqs.append(self.prefix_ids + context + self.suffix_ids)
             
-            if self.window_size > 0 and len(current_generated) > self.window_size:
-                context_part = current_generated[-self.window_size:]
-            else:
-                context_part = current_generated
+            max_input_len = max(len(s) for s in input_seqs)
+            pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
             
-            proxy_in_tok_ids = self.prefix_ids + context_part + self.suffix_ids
-            in_tensor = torch.tensor([proxy_in_tok_ids], device=self.device, dtype=torch.long)
+            padded = [s + [pad_id] * (max_input_len - len(s)) for s in input_seqs]
+            attn_masks = [[1] * len(s) + [0] * (max_input_len - len(s)) for s in input_seqs]
             
-            #model forward
+            in_tensor = torch.tensor(padded, device=self.device, dtype=torch.long)
+            attn_tensor = torch.tensor(attn_masks, device=self.device, dtype=torch.long)
+            
             with torch.no_grad():
-                outputs = self.proxy_model(input_ids=in_tensor, return_dict=True)
-                next_tok_logits = outputs.logits[0, -1, :].unsqueeze(0)
-                
-            #seed from last token id
-            if i > 0:
-                last_token_id = output_tok_ids[i-1]
-            else:
-                last_token_id = 0
-                
-            #水印判定
+                outputs = self.proxy_model(input_ids=in_tensor, attention_mask=attn_tensor, return_dict=True)
+            
+            seq_lens = [len(s) for s in input_seqs]
+            logits_list = [outputs.logits[j, seq_lens[j] - 1, :] for j in range(len(batch_indices))]
+            next_tok_logits = torch.stack(logits_list, dim=0)
+            
             entropy = self.watermarker._compute_entropy(next_tok_logits)
+            last_token_tensor = torch.tensor(last_tokens, device=self.device, dtype=torch.long)
+            green_mask = self.watermarker._get_green_list_mask(next_tok_logits, last_token_tensor)
             
-            if entropy >= self.watermarker.entropy_threshold:
-                total_scored += 1
-                
-                # 计算红绿名单 mask，形状为 (1, vocab_size)
-                green_mask = self.watermarker._get_green_list_mask(next_tok_logits, torch.tensor([last_token_id], device=self.device, dtype=torch.long))
-                
-                # 判定是否命中
-                if target_token_id < green_mask.size(1):
-                    is_green = green_mask[0, target_token_id].item()
-                    if is_green:
-                        green_tokens += 1
-
-        return self._calculate_scores(green_tokens, total_scored, z_threshold)
-
-    def _calculate_scores(self, green_tokens, total_scored, z_threshold):
-        if total_scored == 0:
-            return {
-                "num_green_tokens": 0, "num_tokens_scored": 0, 
-                "z_score": 0.0, "p_value": 1.0, "prediction": False, 
-                "confidence": 0.0, "green_fraction": 0.0
-            }
-            
-            
-        # 没有水印情况下的绿词出现概率：0.5
-        gamma = 0.5 
-        expected_green = total_scored * gamma
-        std_dev = math.sqrt(total_scored * gamma * (1 - gamma))
+            for j, i in enumerate(batch_indices):
+                if entropy[j] >= self.watermarker.entropy_threshold:
+                    scored_counts[i] += 1
+                    if target_tokens[j] < green_mask.size(1) and green_mask[j, target_tokens[j]].item():
+                        green_counts[i] += 1
         
+        results = []
+        for i in range(len(texts)):
+            g, t = green_counts[i], scored_counts[i]
+            if t == 0:
+                results.append({"num_green_tokens": 0, "num_tokens_scored": 0, "green_fraction": 0.0, "z_score": 0.0, "prediction": False, "p_value": 0.0})
+            else:
+                z = (g - t * 0.5) / math.sqrt(t * 0.25)
+                results.append({"num_green_tokens": g, "num_tokens_scored": t, "green_fraction": g / t, "z_score": z, "prediction": z > z_threshold, "p_value": 0.0})
         
-        z_score = (green_tokens - expected_green) / std_dev
-        prediction = z_score > z_threshold
-        green_fraction = green_tokens / total_scored
-        
-        
-        return {
-            "num_green_tokens": green_tokens,
-            "num_tokens_scored": total_scored,
-            "green_fraction": green_fraction,
-            "z_score": z_score,
-            "prediction": prediction,
-            "p_value": 0.0 #先不算，需要吗？
-        }
+        return results[0] if single else results

@@ -305,7 +305,7 @@ class WatermarkVLLMAdapter(LogitsProcessor):
             self.impl = WLLM_VLLMAdapter(vllm_config, device, is_pin_memory)
 
         elif self.algorithm=="sweet":
-            self.impl=Sweet_VLLMAdapter(vllm_config, device, is_pin_memory)
+            self.impl = Sweet_VLLMAdapter(vllm_config, device, is_pin_memory)
 
         elif self.algorithm == "sir":
             if SIRLogitsProcessor is None:

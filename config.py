@@ -5,6 +5,8 @@ from rich.console import Console
 
 class EnvConfig:
     main_model: str = os.environ["MAIN_MODEL"]
+
+    # proxy watermark 配置
     watermark_proxy_model: str = os.environ["WATERMARK_PROXY_MODEL"]
     watermark_proxy_template_prefix: str = os.environ["WATERMARK_PROXY_TEMPLATE_PREFIX"]
     watermark_proxy_template_suffix: str = os.environ["WATERMARK_PROXY_TEMPLATE_SUFFIX"]
@@ -12,6 +14,9 @@ class EnvConfig:
     watermark_delta: float = float(os.environ.get("WATERMARK_DELTA", "2.0"))
     watermark_secret_key: int = int(os.environ.get("WATERMARK_SECRET_KEY", "42"))
     window_size: int = int(os.environ.get("WATERMARK_PROXY_WINDOW_SIZE", "-1"))
+
+    # wllm 配置
+    watermark_gamma: float = float(os.environ.get("WATERMARK_GAMMA", "0.5"))
 
 console = Console()
 
